@@ -1,0 +1,11 @@
+{
+  "appId": "ua.moroz.zadachi",
+  "appName": "Задачи команды",
+  "webDir": "www",
+  "server": {
+    "url": "https://alex125226.github.io/zadachi-komandy/",
+    "errorPath": "offline.html",
+    "allowNavigation": ["alex125226.github.io", "fmpktiwswhgimzkargob.supabase.co"]
+  },
+  "android": { "backgroundColor": "#dff1f7" }
+}
