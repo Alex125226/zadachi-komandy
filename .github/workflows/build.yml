@@ -22,7 +22,7 @@ jobs:
       name: github-pages
       url: ${{ steps.deploy.outputs.page_url }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Собрать сайт
         run: |
           V="1.${{ github.run_number }}"
@@ -33,7 +33,7 @@ jobs:
           printf '{"web":"%s","apk":"%s","apkUrl":"https://github.com/%s/releases/latest/download/zadachi.apk"}\n' "$V" "$APK" "${{ github.repository }}" > site/version.json
           cat site/version.json
       - uses: actions/configure-pages@v5
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@v4
         with:
           path: site
       - id: deploy
@@ -43,7 +43,7 @@ jobs:
     name: Android APK
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Нужна ли новая сборка
         id: check
         env:
@@ -53,11 +53,11 @@ jobs:
           echo "version=$APK" >> "$GITHUB_OUTPUT"
           if gh release view "v$APK" >/dev/null 2>&1; then echo "build=no" >> "$GITHUB_OUTPUT"; else echo "build=yes" >> "$GITHUB_OUTPUT"; fi
       - if: steps.check.outputs.build == 'yes'
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: 22
       - if: steps.check.outputs.build == 'yes'
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: 21
