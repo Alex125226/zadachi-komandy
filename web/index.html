@@ -210,7 +210,7 @@ const NEXT={todo:'doing',doing:'done',done:'todo'};
 const PRI=['Обычный','Высокий','Срочно'];
 const COLORS=['#0a7ea4','#ff2e7e','#7a5cff','#e08a00','#1a9e6a','#c2410c','#475569','#0e7490'];
 const TITLES={list:'Задачи',board:'Доска',proj:'Проекты',rep:'Отчёт',chat:'Чат'};
-const REGIONS=['Днепр','Запорожье','Каменское','Полтава','Харьков','Чернигов'];
+let REGIONS=[],RG=[];
 const ROLES={manager:'Руководитель',head:'Старший по региону',staff:'Сотрудник'};
 const pad=n=>String(n).padStart(2,'0');
 const day=d=>d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate());
@@ -254,11 +254,12 @@ async function loadT(){const prev=new Map(T.map(t=>[t.id,t.assigneeId]));const f
 async function loadTM(){TM=(await ok(sb.from('wt_time').select('*').order('created_at',{ascending:false}).limit(3000))).map(r=>({id:r.id,taskId:r.task_id,min:r.minutes,at:ms(r.created_at),by:r.user_id}))}
 async function loadCH(){CH=(await ok(sb.from('wt_chat').select('*').order('created_at',{ascending:false}).limit(600))).map(r=>({id:r.id,region:r.region||'',taskId:r.task_id||'',by:r.author,text:r.text,at:ms(r.created_at)})).reverse()}
 async function loadTeam(){TEAM=(await ok(sb.from('wt_members').select('*').order('name'))).map(r=>({id:r.user_id,name:r.name,login:r.login,role:r.role,region:r.region||'',active:r.active}));names={};TEAM.forEach(m=>names[m.id]=m.name);meM=member(me);isMgr=!!(meM&&meM.role==='manager'&&meM.active)}
+async function loadRG(){RG=(await ok(sb.from('wt_regions').select('*').order('sort').order('name'))).map(r=>({id:r.id,name:r.name,sort:r.sort}));REGIONS=RG.map(r=>r.name);if(fReg!=='all'&&!REGIONS.includes(fReg))fReg='all'}
 async function loadCM(){if(!curId)return;CM=(await ok(sb.from('wt_comments').select('*').eq('task_id',curId).order('created_at').limit(300))).map(r=>({id:r.id,by:r.author,text:r.text,at:ms(r.created_at)}));drawComments()}
 const timers={};
 function later(k,fn){clearTimeout(timers[k]);timers[k]=setTimeout(async()=>{try{await fn();refresh()}catch(e){console.warn(e)}},250)}
 function refresh(){if(sheetKind==='task')drawTime();if(sheetKind==='team')teamSheet();if(!sheetKind)render();else if(view==='chat'||view==='rep')render()}
-async function loadAll(){await Promise.all([loadTeam(),loadP(),loadTM(),loadCH()]);await loadT()}
+async function loadAll(){await Promise.all([loadRG(),loadTeam(),loadP(),loadTM(),loadCH()]);await loadT()}
 function subscribe(){
   if(channel)sb.removeChannel(channel);
   channel=sb.channel('wt-all')
@@ -266,6 +267,7 @@ function subscribe(){
    .on('postgres_changes',{event:'*',schema:'public',table:'wt_projects'},()=>later('p',loadP))
    .on('postgres_changes',{event:'*',schema:'public',table:'wt_time'},()=>later('m',loadTM))
    .on('postgres_changes',{event:'*',schema:'public',table:'wt_members'},()=>later('team',loadTeam))
+   .on('postgres_changes',{event:'*',schema:'public',table:'wt_regions'},()=>later('rg',async()=>{await loadRG();await loadT()}))
    .on('postgres_changes',{event:'*',schema:'public',table:'wt_comments'},p=>{const n=p.new||{},o=p.old||{};if(curId&&(n.task_id===curId||o.task_id===curId))later('c',loadCM)})
    .on('postgres_changes',{event:'*',schema:'public',table:'wt_chat'},p=>{const n=p.new;
       if(p.eventType==='INSERT'&&n&&n.author!==me&&!(view==='chat'&&(n.region||'')===chKey(fReg))&&(!n.region||n.region===(meM&&meM.region)||isMgr))notify((n.region?n.region+' · ':'')+nm(n.author)+': '+n.text);
@@ -319,7 +321,7 @@ function repHTML(){
   <h2 class="grp">Команда${fReg!=='all'?' · '+esc(fReg):''} <span>${tm.length}</span></h2>
   <div class="scroll"><table class="tt2"><thead><tr><th>Сотрудник</th><th>Открыто</th><th>Просроч.</th><th>Готово 7 дн.</th><th>Время 7 дн.</th></tr></thead><tbody>${rowsT.map(r=>`<tr data-who="${esc(r.m.id)}"><td><b>${esc(r.m.name)}</b><small>${esc(ROLES[r.m.role]||'')}${r.m.region?' · '+esc(r.m.region):''}</small></td><td>${r.o}</td><td class="${r.od?'od':''}">${r.od}</td><td>${r.dn}</td><td>${fm(r.min)}</td></tr>`).join('')}</tbody></table></div>
   ${noA?`<p class="note">Без ответственного: ${noA} открытых задач.</p>`:''}
-  ${isMgr?'<button class="btn ghost" style="width:100%;margin-top:10px" id="teamBtn">Управление командой</button>':''}
+  ${isMgr?'<div class="acts" style="margin-top:10px"><button class="btn ghost" id="teamBtn">Управление командой</button><button class="btn ghost" id="regBtn">Регионы</button></div>':''}
   ${fReg==='all'?`<h2 class="grp">Открытые задачи по регионам</h2><div class="rows">${Object.keys(byR).length?Object.entries(byR).sort((a,b)=>b[1]-a[1]).map(([r,n])=>`<div class="r"><span>${esc(r)}${odR[r]?` · <b class="od">${odR[r]} просроч.</b>`:''}</span><em>${n}</em><div class="bar"><i style="width:${n/mr*100}%"></i></div></div>`).join(''):'<div class="r"><span>Открытых задач нет</span></div>'}</div>`:''}
   <h2 class="grp">Время по проектам, 7 дней</h2><div class="rows">${Object.keys(byP).length?Object.entries(byP).sort((a,b)=>b[1]-a[1]).map(([id,m])=>{const p=proj(id);return `<div class="r" style="--c:${esc(p?.color||'#888')}"><span>${esc(p?.name||'Без проекта')}</span><em>${fm(m)}</em><div class="bar"><i style="width:${m/mx*100}%"></i></div></div>`}).join(''):'<div class="r"><span>Пока нет записей времени</span></div>'}</div>
   ${od.length?`<h2 class="grp">Просроченные <span>${od.length}</span></h2>${sortT(od).map(card).join('')}`:''}`;
@@ -371,7 +373,7 @@ function taskSheet(){
   <label>Название<input id="f-title" value="${esc(draft.title)}" placeholder="Что нужно сделать" maxlength="300"></label>
   <div class="seg" id="f-st">${ST.map(s=>`<button data-s="${s.k}" aria-pressed="${draft.status===s.k}">${s.n}</button>`).join('')}</div>
   <label>Описание<textarea id="f-desc" rows="3" placeholder="Подробности, адрес ТТ, контакты">${esc(draft.desc)}</textarea></label>
-  <div class="row2"><label>Регион<select id="f-reg"><option value="">Без региона</option>${REGIONS.map(r=>`<option${r===draft.region?' selected':''}>${esc(r)}</option>`).join('')}</select></label>
+  <div class="row2"><label>Регион<select id="f-reg"><option value="">Без региона</option>${(draft.region&&!REGIONS.includes(draft.region)?[draft.region]:[]).concat(REGIONS).map(r=>`<option${r===draft.region?' selected':''}>${esc(r)}</option>`).join('')}</select></label>
   <label>Проект<select id="f-proj"><option value="">Без проекта</option>${P.map(p=>`<option value="${esc(p.id)}"${p.id===draft.projectId?' selected':''}>${esc(p.name)}</option>`).join('')}</select></label></div>
   <label>Ответственный<select id="f-asid"><option value="">Не назначен</option>${team.map(m=>`<option value="${esc(m.id)}"${m.id===draft.assigneeId?' selected':''}>${esc(m.name)}${m.region?' · '+esc(m.region):''}${m.id===me?' (вы)':''}</option>`).join('')}</select></label>
   <div class="row2"><label>Приоритет<select id="f-pri">${PRI.map((n,i)=>`<option value="${i}"${+draft.priority===i?' selected':''}>${n}</option>`).join('')}</select></label><label>Срок<input id="f-due" type="date" value="${esc(draft.due)}"></label></div>
@@ -467,6 +469,26 @@ async function addMember(){
   try{await admin(b);toast('Готово: логин '+b.login);$('#n-name').value='';$('#n-login').value='';$('#n-pass').value='';await loadTeam();teamSheet()}catch(e){toast(e.message)}finally{const x=$('#n-add');if(x){x.disabled=false;x.textContent='Создать доступ'}}
 }
 
+/* ---------- Регионы ---------- */
+function openRegs(){sheetKind='regs';regSheet();$('#ov').hidden=false;history.pushState({s:1},'')}
+function regSheet(){
+  const add=$('#rg-new')?.value||'';
+  $('#sheet').innerHTML=`<div class="sh-h"><h2>Регионы</h2><button class="link" data-close>Закрыть</button></div>
+  <p class="note" style="margin-top:0">При переименовании задачи, сотрудники и чат региона переходят на новое название. При удалении задачи и сотрудники остаются «без региона».</p>
+  ${RG.map((r,i)=>{const n=T.filter(t=>t.region===r.name&&t.status!=='done').length,m=TEAM.filter(x=>x.region===r.name&&x.active).length;
+   return `<form class="mem" data-rgid="${esc(r.id)}"><input value="${esc(r.name)}" maxlength="40" aria-label="Название региона" style="flex:1 1 140px;border:1px solid var(--line);background:var(--card);border-radius:10px;padding:9px 10px;font-size:16px;color:var(--ink)">
+   <button class="link" type="submit">Сохранить</button>${i?`<button class="link" type="button" data-rgup="${esc(r.id)}" aria-label="Выше">↑</button>`:''}<button class="link" type="button" data-rgdel="${esc(r.id)}">Удалить</button>
+   <small class="note" style="flex-basis:100%;margin:0">${n} открытых задач · ${m} сотрудников</small></form>`}).join('')||'<p class="note">Регионов нет.</p>'}
+  <h3>Новый регион</h3><form class="inl" id="rg-add"><input id="rg-new" value="${esc(add)}" maxlength="40" placeholder="Например, Кривой Рог"><button class="btn acc">Добавить</button></form>`;
+}
+async function regSave(id,name){
+  name=name.trim();if(!name)return toast('Введите название');
+  if(RG.some(r=>r.id!==id&&r.name.toLowerCase()===name.toLowerCase()))return toast('Такой регион уже есть');
+  try{if(id){const old=RG.find(r=>r.id===id);if(old&&old.name===name)return;await ok(sb.from('wt_regions').update({name}).eq('id',id));if(fReg===old?.name){fReg=name;ls.set('ws-reg',name)}toast('Переименовано')}
+   else{await ok(sb.from('wt_regions').insert({name,sort:Math.max(0,...RG.map(r=>r.sort))+1}));const i=$('#rg-new');if(i)i.value='';toast('Регион добавлен')}
+   await loadRG();await loadTeam();await loadT();regSheet();render()}catch(e){fail(e)}
+}
+
 /* ---------- Профиль ---------- */
 function openMe(){
   sheetKind='me';
@@ -496,6 +518,7 @@ async function sendMsg(text,taskId){
 $('#view').addEventListener('click',e=>{
   const op=e.target.closest('[data-open]');if(op)return openTask(op.dataset.open);
   if(e.target.closest('#teamBtn'))return openTeam();
+  if(e.target.closest('#regBtn'))return openRegs();
   if(e.target.closest('[data-clrwho]')){fWho='';return render()}
   const wh=e.target.closest('[data-who]');if(wh){fWho=wh.dataset.who;mineOnly=false;view='list';render();scrollTo(0,0);return}
   const st=e.target.closest('[data-st]');if(st){e.stopPropagation();cycle(st.dataset.st);return}
@@ -514,6 +537,11 @@ $('#sheet').addEventListener('click',async e=>{
     const c=t.closest('[data-c]');if(c){draft.color=c.dataset.c;document.querySelectorAll('.sw button').forEach(b=>b.setAttribute('aria-pressed',b===c));return}
     if(t.id==='psave')return saveProject();
     if(t.id==='pdel'){if(!delArm){delArm=true;t.textContent='Точно удалить?';return}try{await ok(sb.from('wt_projects').delete().eq('id',curId));if(fProj===curId)fProj='all';closeSheet();toast('Проект удалён');later('p',loadP)}catch(err){fail(err)}}
+    return;
+  }
+  if(sheetKind==='regs'){
+    const up=t.closest('[data-rgup]');if(up){const i=RG.findIndex(r=>r.id===up.dataset.rgup);if(i>0){const a=RG[i],b=RG[i-1];try{await ok(sb.from('wt_regions').update({sort:b.sort}).eq('id',a.id));await ok(sb.from('wt_regions').update({sort:a.sort===b.sort?b.sort+1:a.sort}).eq('id',b.id));await loadRG();regSheet();render()}catch(err){fail(err)}}return}
+    const dl=t.closest('[data-rgdel]');if(dl){if(dl.dataset.arm!=='1'){dl.dataset.arm='1';dl.textContent='Точно удалить?';return}const r=RG.find(x=>x.id===dl.dataset.rgdel);try{await ok(sb.from('wt_regions').delete().eq('id',dl.dataset.rgdel));if(r&&fReg===r.name)fReg='all';toast('Регион удалён');await loadRG();await loadTeam();await loadT();regSheet();render()}catch(err){fail(err)}return}
     return;
   }
   if(sheetKind==='team'){
@@ -537,6 +565,8 @@ $('#sheet').addEventListener('change',async e=>{
 });
 $('#sheet').addEventListener('submit',async e=>{
   e.preventDefault();const f=e.target;
+  if(f.dataset.rgid)return regSave(f.dataset.rgid,f.querySelector('input').value);
+  if(f.id==='rg-add')return regSave('',$('#rg-new').value);
   if(f.dataset.pwfor){const v=f.querySelector('input').value;try{await admin({action:'reset',user_id:f.dataset.pwfor,password:v});toast('Пароль изменён');f.remove()}catch(err){toast(err.message)}return}
   if(f.id==='pw-form'){const v=$('#pw-in').value;if(v.length<6)return toast('Пароль: от 6 символов');const {error}=await sb.auth.updateUser({password:v});toast(error?'Не удалось сменить пароль':'Пароль изменён');if(!error)$('#pw-in').value='';return}
   if(f.id==='cl-add'){const v=$('#cl-in').value.trim();if(!v)return;sync();(draft.checklist=draft.checklist||[]).push({t:v,d:false});taskSheet();saveChecklist();$('#cl-in').focus()}
