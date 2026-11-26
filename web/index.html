@@ -211,7 +211,7 @@ const PRI=['Обычный','Высокий','Срочно'];
 const COLORS=['#0a7ea4','#ff2e7e','#7a5cff','#e08a00','#1a9e6a','#c2410c','#475569','#0e7490'];
 const TITLES={list:'Задачи',board:'Доска',proj:'Проекты',rep:'Отчёт',chat:'Чат'};
 let REGIONS=[],RG=[];
-const ROLES={manager:'Руководитель',head:'Старший по региону',staff:'Сотрудник'};
+let ROLES={},RL=[];
 const pad=n=>String(n).padStart(2,'0');
 const day=d=>d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate());
 const today=()=>day(new Date());
@@ -223,7 +223,7 @@ const ls={get(k){try{return localStorage.getItem(k)}catch(e){return null}},set(k
 const Cap=window.Capacitor,Plug=Cap&&Cap.Plugins||{};
 const sb=window.supabase.createClient(SB_URL,SB_KEY,{auth:{persistSession:true,autoRefreshToken:true,detectSessionInUrl:false}});
 
-let me=null,meM=null,isMgr=false,ready=false,channel=null;
+let me=null,meM=null,isMgr=false,canProj=false,canDel=false,ready=false,channel=null;
 let P=[],T=[],TM=[],CM=[],CH=[],TEAM=[],names={};
 let view=TITLES[ls.get('ws-view')]?ls.get('ws-view'):'list',fProj='all',fReg='all',fWho='',q='',openOnly=false,mineOnly=false;
 let draft=null,curId=null,sheetKind=null,delArm=false;
@@ -253,13 +253,15 @@ async function loadT(){const prev=new Map(T.map(t=>[t.id,t.assigneeId]));const f
   if(!first&&me)T.forEach(t=>{if(t.assigneeId===me&&prev.get(t.id)!==me&&t.createdBy!==me){notify('Вам назначена задача: '+t.title)}})}
 async function loadTM(){TM=(await ok(sb.from('wt_time').select('*').order('created_at',{ascending:false}).limit(3000))).map(r=>({id:r.id,taskId:r.task_id,min:r.minutes,at:ms(r.created_at),by:r.user_id}))}
 async function loadCH(){CH=(await ok(sb.from('wt_chat').select('*').order('created_at',{ascending:false}).limit(600))).map(r=>({id:r.id,region:r.region||'',taskId:r.task_id||'',by:r.author,text:r.text,at:ms(r.created_at)})).reverse()}
-async function loadTeam(){TEAM=(await ok(sb.from('wt_members').select('*').order('name'))).map(r=>({id:r.user_id,name:r.name,login:r.login,role:r.role,region:r.region||'',active:r.active}));names={};TEAM.forEach(m=>names[m.id]=m.name);meM=member(me);isMgr=!!(meM&&meM.role==='manager'&&meM.active)}
+async function loadTeam(){TEAM=(await ok(sb.from('wt_members').select('*').order('name'))).map(r=>({id:r.user_id,name:r.name,login:r.login,role:r.role,region:r.region||'',active:r.active}));names={};TEAM.forEach(m=>names[m.id]=m.name);meM=member(me);calcPerms()}
+function calcPerms(){const r=meM&&meM.active?RL.find(x=>x.key===meM.role):null;isMgr=!!(r&&r.is_admin);canProj=isMgr||!!(r&&r.can_projects);canDel=isMgr||!!(r&&r.can_delete)}
+async function loadRL(){RL=await ok(sb.from('wt_roles').select('*').order('sort').order('name'));ROLES={};RL.forEach(r=>ROLES[r.key]=r.name);calcPerms()}
 async function loadRG(){RG=(await ok(sb.from('wt_regions').select('*').order('sort').order('name'))).map(r=>({id:r.id,name:r.name,sort:r.sort}));REGIONS=RG.map(r=>r.name);if(fReg!=='all'&&!REGIONS.includes(fReg))fReg='all'}
 async function loadCM(){if(!curId)return;CM=(await ok(sb.from('wt_comments').select('*').eq('task_id',curId).order('created_at').limit(300))).map(r=>({id:r.id,by:r.author,text:r.text,at:ms(r.created_at)}));drawComments()}
 const timers={};
 function later(k,fn){clearTimeout(timers[k]);timers[k]=setTimeout(async()=>{try{await fn();refresh()}catch(e){console.warn(e)}},250)}
 function refresh(){if(sheetKind==='task')drawTime();if(sheetKind==='team')teamSheet();if(!sheetKind)render();else if(view==='chat'||view==='rep')render()}
-async function loadAll(){await Promise.all([loadRG(),loadTeam(),loadP(),loadTM(),loadCH()]);await loadT()}
+async function loadAll(){await loadRL();await Promise.all([loadRG(),loadTeam(),loadP(),loadTM(),loadCH()]);await loadT()}
 function subscribe(){
   if(channel)sb.removeChannel(channel);
   channel=sb.channel('wt-all')
@@ -267,6 +269,7 @@ function subscribe(){
    .on('postgres_changes',{event:'*',schema:'public',table:'wt_projects'},()=>later('p',loadP))
    .on('postgres_changes',{event:'*',schema:'public',table:'wt_time'},()=>later('m',loadTM))
    .on('postgres_changes',{event:'*',schema:'public',table:'wt_members'},()=>later('team',loadTeam))
+   .on('postgres_changes',{event:'*',schema:'public',table:'wt_roles'},()=>later('rl',async()=>{await loadRL();await loadTeam()}))
    .on('postgres_changes',{event:'*',schema:'public',table:'wt_regions'},()=>later('rg',async()=>{await loadRG();await loadT()}))
    .on('postgres_changes',{event:'*',schema:'public',table:'wt_comments'},p=>{const n=p.new||{},o=p.old||{};if(curId&&(n.task_id===curId||o.task_id===curId))later('c',loadCM)})
    .on('postgres_changes',{event:'*',schema:'public',table:'wt_chat'},p=>{const n=p.new;
@@ -285,7 +288,7 @@ function card(t){
   <div class="meta">${t.region?`<span class="reg">${esc(t.region)}</span>`:''}${p?`<span class="chip" style="--c:${esc(p.color)}">${esc(p.name)}</span>`:''}${t.due?`<span class="${overdue(t)?'od':''}">до ${fd(t.due)}</span>`:''}${aName(t)?`<span${mine?' class="reg"':''}>${mine?'Вы':esc(aName(t))}</span>`:''}${cl.length?`<span>☑ ${cd}/${cl.length}</span>`:''}${tm?`<span>${fm(tm)}</span>`:''}${run&&run.id===t.id?'<span class="od">● таймер</span>':''}</div></div></article>`;
 }
 function emptyBox(){
-  if(!P.length&&view==='proj')return isMgr?'<div class="empty"><b>Начните с проекта</b>Например: «Открытие ТТ», «Ремонт», «Закупки».<br><br><button class="btn acc" data-newp>Создать проект</button></div>':'<div class="empty"><b>Проектов пока нет</b>Их создаёт руководитель.</div>';
+  if(!P.length&&view==='proj')return canProj?'<div class="empty"><b>Начните с проекта</b>Например: «Открытие ТТ», «Ремонт», «Закупки».<br><br><button class="btn acc" data-newp>Создать проект</button></div>':'<div class="empty"><b>Проектов пока нет</b>Их создаёт руководитель.</div>';
   return `<div class="empty"><b>${mineOnly?'На вас задач нет':'Задач нет'}</b>${q||openOnly||mineOnly||fWho||fProj!=='all'||fReg!=='all'?'Под выбранные фильтры ничего не подходит.':'Нажмите «+», чтобы поставить первую задачу.'}</div>`;
 }
 function listHTML(){
@@ -304,8 +307,8 @@ function projHTML(){
   return P.map(p=>{const ts=T.filter(t=>t.projectId===p.id&&inReg(t)),d=ts.filter(t=>t.status==='done').length,od=ts.filter(overdue).length,pc=ts.length?Math.round(d/ts.length*100):0,ids=new Set(ts.map(t=>t.id));
     return `<div class="prow" style="--c:${esc(p.color)}" data-proj="${esc(p.id)}" role="button" tabindex="0"><b><i></i>${esc(p.name)}</b>
     <div class="meta"><span>${ts.length-d} открыто</span><span>${d} готово</span>${od?`<span class="od">${od} просрочено</span>`:''}<span>${fm(TM.filter(x=>ids.has(x.taskId)).reduce((s,x)=>s+(+x.min||0),0))}</span></div>
-    <div class="bar"><i style="width:${pc}%"></i></div>${isMgr?`<div class="prow-acts"><button class="link" data-editp="${esc(p.id)}">Изменить</button></div>`:''}</div>`}).join('')
-    +(isMgr?'<button class="btn ghost" style="width:100%" data-newp>+ Новый проект</button>':'');
+    <div class="bar"><i style="width:${pc}%"></i></div>${canProj?`<div class="prow-acts"><button class="link" data-editp="${esc(p.id)}">Изменить</button></div>`:''}</div>`}).join('')
+    +(canProj?'<button class="btn ghost" style="width:100%" data-newp>+ Новый проект</button>':'');
 }
 function repHTML(){
   const ts=T.filter(t=>inReg(t)&&(fProj==='all'||t.projectId===fProj)),wk=Date.now()-7*864e5,tids=new Set(ts.map(t=>t.id));
@@ -314,14 +317,14 @@ function repHTML(){
   const byR={};open.forEach(t=>{const r=t.region||'Без региона';byR[r]=(byR[r]||0)+1});const mr=Math.max(1,...Object.values(byR));
   const odR={};od.forEach(t=>{const r=t.region||'Без региона';odR[r]=(odR[r]||0)+1});
   const byP={};tw.forEach(x=>{const k=taskProj(x.taskId);byP[k]=(byP[k]||0)+(+x.min||0)});const mx=Math.max(1,...Object.values(byP));
-  const tm=TEAM.filter(m=>m.active&&(fReg==='all'||m.region===fReg||m.role==='manager'));
+  const tm=TEAM.filter(m=>m.active&&(fReg==='all'||m.region===fReg||RL.find(r=>r.key===m.role)?.is_admin));
   const rowsT=tm.map(m=>{const mt=ts.filter(t=>t.assigneeId===m.id);return{m,o:mt.filter(t=>t.status!=='done').length,od:mt.filter(overdue).length,dn:mt.filter(t=>t.status==='done'&&(t.doneAt||0)>wk).length,min:tw.filter(x=>x.by===m.id).reduce((s,x)=>s+(+x.min||0),0)}}).sort((a,b)=>b.od-a.od||b.o-a.o);
   const noA=open.filter(t=>!t.assigneeId).length;
   return `<div class="kpis"><div class="kpi"><b>${open.length}</b><span>открытых задач</span></div><div class="kpi ${od.length?'hot':''}"><b>${od.length}</b><span>просрочено</span></div><div class="kpi"><b>${dn.length}</b><span>готово за 7 дней</span></div><div class="kpi"><b>${fm(tw.reduce((s,x)=>s+(+x.min||0),0))}</b><span>время за 7 дней</span></div></div>
   <h2 class="grp">Команда${fReg!=='all'?' · '+esc(fReg):''} <span>${tm.length}</span></h2>
   <div class="scroll"><table class="tt2"><thead><tr><th>Сотрудник</th><th>Открыто</th><th>Просроч.</th><th>Готово 7 дн.</th><th>Время 7 дн.</th></tr></thead><tbody>${rowsT.map(r=>`<tr data-who="${esc(r.m.id)}"><td><b>${esc(r.m.name)}</b><small>${esc(ROLES[r.m.role]||'')}${r.m.region?' · '+esc(r.m.region):''}</small></td><td>${r.o}</td><td class="${r.od?'od':''}">${r.od}</td><td>${r.dn}</td><td>${fm(r.min)}</td></tr>`).join('')}</tbody></table></div>
   ${noA?`<p class="note">Без ответственного: ${noA} открытых задач.</p>`:''}
-  ${isMgr?'<div class="acts" style="margin-top:10px"><button class="btn ghost" id="teamBtn">Управление командой</button><button class="btn ghost" id="regBtn">Регионы</button></div>':''}
+  ${isMgr?'<div class="acts" style="margin-top:10px"><button class="btn ghost" id="teamBtn">Управление командой</button><button class="btn ghost" id="regBtn">Регионы</button><button class="btn ghost" id="roleBtn">Роли</button></div>':''}
   ${fReg==='all'?`<h2 class="grp">Открытые задачи по регионам</h2><div class="rows">${Object.keys(byR).length?Object.entries(byR).sort((a,b)=>b[1]-a[1]).map(([r,n])=>`<div class="r"><span>${esc(r)}${odR[r]?` · <b class="od">${odR[r]} просроч.</b>`:''}</span><em>${n}</em><div class="bar"><i style="width:${n/mr*100}%"></i></div></div>`).join(''):'<div class="r"><span>Открытых задач нет</span></div>'}</div>`:''}
   <h2 class="grp">Время по проектам, 7 дней</h2><div class="rows">${Object.keys(byP).length?Object.entries(byP).sort((a,b)=>b[1]-a[1]).map(([id,m])=>{const p=proj(id);return `<div class="r" style="--c:${esc(p?.color||'#888')}"><span>${esc(p?.name||'Без проекта')}</span><em>${fm(m)}</em><div class="bar"><i style="width:${m/mx*100}%"></i></div></div>`}).join(''):'<div class="r"><span>Пока нет записей времени</span></div>'}</div>
   ${od.length?`<h2 class="grp">Просроченные <span>${od.length}</span></h2>${sortT(od).map(card).join('')}`:''}`;
@@ -384,7 +387,7 @@ function taskSheet(){
   <h3>Комментарии <span id="cm-n"></span></h3><div id="cm-list"><p class="note">Загрузка…</p></div>
   <form class="inl" id="cm-add"><input id="cm-in" placeholder="Написать комментарий" maxlength="2000"><button class="btn">Отпр.</button></form>
   <button class="btn ghost" id="toChat" style="width:100%;margin-top:14px">Обсудить в чате ${draft.region?'региона '+esc(draft.region):'(общем)'}</button>`:''}
-  <div class="acts"><button class="btn acc" id="save">Сохранить</button>${curId&&isMgr?'<button class="btn del" id="del">Удалить</button>':''}</div>
+  <div class="acts"><button class="btn acc" id="save">Сохранить</button>${curId&&canDel?'<button class="btn del" id="del">Удалить</button>':''}</div>
   ${curId&&draft.createdBy?`<p class="note">Поставил: ${esc(nm(draft.createdBy))}${draft.createdAt?' · '+ftime(draft.createdAt):''}</p>`:''}`;
   drawTime();
 }
@@ -449,7 +452,7 @@ function openTeam(){sheetKind='team';teamSheet();$('#ov').hidden=false;history.p
 function teamSheet(){
   const keep={n:$('#n-name')?.value||'',l:$('#n-login')?.value||'',p:$('#n-pass')?.value||'',r:$('#n-reg')?.value??(fReg!=='all'?fReg:''),ro:$('#n-role')?.value||'staff'};
   const opt=(list,cur)=>list.map(([v,n])=>`<option value="${esc(v)}"${v===cur?' selected':''}>${esc(n)}</option>`).join('');
-  const regOpts=[['','Все регионы']].concat(REGIONS.map(r=>[r,r])),roleOpts=Object.entries(ROLES);
+  const regOpts=[['','Все регионы']].concat(REGIONS.map(r=>[r,r])),roleOpts=RL.map(r=>[r.key,r.name]);
   $('#sheet').innerHTML=`<div class="sh-h"><h2>Команда</h2><button class="link" data-close>Закрыть</button></div>
   <h3>Новый сотрудник</h3>
   <label>Имя и фамилия<input id="n-name" value="${esc(keep.n)}" maxlength="60" placeholder="Например, Ирина Коваль"></label>
@@ -489,6 +492,31 @@ async function regSave(id,name){
    await loadRG();await loadTeam();await loadT();regSheet();render()}catch(e){fail(e)}
 }
 
+/* ---------- Роли ---------- */
+const PERMS=[['is_admin','Права руководителя: команда, роли, регионы, всё остальное'],['can_projects','Создавать и менять проекты'],['can_delete','Удалять задачи']];
+function openRoles(){sheetKind='roles';roleSheet();$('#ov').hidden=false;history.pushState({s:1},'')}
+function roleSheet(){
+  $('#sheet').innerHTML=`<div class="sh-h"><h2>Роли</h2><button class="link" data-close>Закрыть</button></div>
+  <p class="note" style="margin-top:0">Ставить задачи, менять их статус, писать в чаты и записывать время могут все роли. Ниже — дополнительные права.</p>
+  ${RL.map((r,i)=>{const n=TEAM.filter(m=>m.role===r.key&&m.active).length,base=r.key==='manager';
+   return `<form class="mem" data-rlkey="${esc(r.key)}" style="display:block"><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><input name="nm" value="${esc(r.name)}" maxlength="40" aria-label="Название роли" style="flex:1 1 160px;border:1px solid var(--line);background:var(--card);border-radius:10px;padding:9px 10px;font-size:16px;color:var(--ink)">${i?`<button class="link" type="button" data-rlup="${esc(r.key)}" aria-label="Выше">↑</button>`:''}${base?'':`<button class="link" type="button" data-rldel="${esc(r.key)}">Удалить</button>`}</div>
+   ${PERMS.map(([k,l])=>`<label style="display:flex;gap:10px;align-items:center;color:var(--ink);font-size:15px;margin:8px 0 0"><input type="checkbox" name="${k}" style="width:20px;height:20px;accent-color:var(--acc)"${r[k]?' checked':''}${base&&k==='is_admin'?' disabled':''}>${l}</label>`).join('')}
+   <div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px"><small class="note" style="margin:0">${n} сотрудников${base?' · основная роль, удалить нельзя':''}</small><button class="btn ghost" type="submit" style="min-height:40px">Сохранить</button></div></form>`}).join('')}
+  <h3>Новая роль</h3><form class="inl" id="rl-add"><input id="rl-new" maxlength="40" placeholder="Например, Бухгалтер"><button class="btn acc">Добавить</button></form>`;
+}
+async function roleSave(f){
+  const key=f.dataset.rlkey,name=f.querySelector('[name=nm]').value.trim();if(!name)return toast('Введите название');
+  if(RL.some(r=>r.key!==key&&r.name.toLowerCase()===name.toLowerCase()))return toast('Такая роль уже есть');
+  const d={name};PERMS.forEach(([k])=>{const c=f.querySelector(`[name=${k}]`);if(c&&!c.disabled)d[k]=c.checked});
+  try{await ok(sb.from('wt_roles').update(d).eq('key',key));toast('Роль сохранена');await loadRL();await loadTeam();roleSheet();render()}catch(e){toast(/руководител/i.test(e.message||'')?'В команде должен остаться хотя бы один руководитель':'Не удалось сохранить')}
+}
+async function roleAdd(){
+  const name=$('#rl-new').value.trim();if(!name)return toast('Введите название');
+  if(RL.some(r=>r.name.toLowerCase()===name.toLowerCase()))return toast('Такая роль уже есть');
+  const key='r_'+Date.now().toString(36)+Math.random().toString(36).slice(2,6);
+  try{await ok(sb.from('wt_roles').insert({key,name,sort:Math.max(0,...RL.map(r=>r.sort))+1}));toast('Роль добавлена — отметьте права');await loadRL();roleSheet()}catch(e){fail(e)}
+}
+
 /* ---------- Профиль ---------- */
 function openMe(){
   sheetKind='me';
@@ -507,7 +535,7 @@ $('#chips').addEventListener('click',e=>{const b=e.target.closest('[data-f]');if
 $('#q').addEventListener('input',e=>{q=e.target.value;render()});
 $('#mine').addEventListener('click',()=>{mineOnly=!mineOnly;fWho='';ls.set('ws-mine',mineOnly?'1':'0');render()});
 $('#openOnly').addEventListener('click',e=>{openOnly=!openOnly;e.currentTarget.setAttribute('aria-pressed',openOnly);render()});
-$('#fab').addEventListener('click',()=>view==='proj'&&isMgr?openProject():openTask());
+$('#fab').addEventListener('click',()=>view==='proj'&&canProj?openProject():openTask());
 $('#meBtn').addEventListener('click',openMe);
 $('#runStop').addEventListener('click',stopTimer);
 $('#runT').addEventListener('click',()=>run&&openTask(run.id));
@@ -519,6 +547,7 @@ $('#view').addEventListener('click',e=>{
   const op=e.target.closest('[data-open]');if(op)return openTask(op.dataset.open);
   if(e.target.closest('#teamBtn'))return openTeam();
   if(e.target.closest('#regBtn'))return openRegs();
+  if(e.target.closest('#roleBtn'))return openRoles();
   if(e.target.closest('[data-clrwho]')){fWho='';return render()}
   const wh=e.target.closest('[data-who]');if(wh){fWho=wh.dataset.who;mineOnly=false;view='list';render();scrollTo(0,0);return}
   const st=e.target.closest('[data-st]');if(st){e.stopPropagation();cycle(st.dataset.st);return}
@@ -537,6 +566,11 @@ $('#sheet').addEventListener('click',async e=>{
     const c=t.closest('[data-c]');if(c){draft.color=c.dataset.c;document.querySelectorAll('.sw button').forEach(b=>b.setAttribute('aria-pressed',b===c));return}
     if(t.id==='psave')return saveProject();
     if(t.id==='pdel'){if(!delArm){delArm=true;t.textContent='Точно удалить?';return}try{await ok(sb.from('wt_projects').delete().eq('id',curId));if(fProj===curId)fProj='all';closeSheet();toast('Проект удалён');later('p',loadP)}catch(err){fail(err)}}
+    return;
+  }
+  if(sheetKind==='roles'){
+    const up=t.closest('[data-rlup]');if(up){const i=RL.findIndex(r=>r.key===up.dataset.rlup);if(i>0){const a=RL[i],b=RL[i-1];try{await ok(sb.from('wt_roles').update({sort:b.sort}).eq('key',a.key));await ok(sb.from('wt_roles').update({sort:a.sort===b.sort?b.sort+1:a.sort}).eq('key',b.key));await loadRL();roleSheet()}catch(err){fail(err)}}return}
+    const dl=t.closest('[data-rldel]');if(dl){const k=dl.dataset.rldel;if(TEAM.some(m=>m.role===k))return toast('Сначала переведите сотрудников этой роли на другую');if(dl.dataset.arm!=='1'){dl.dataset.arm='1';dl.textContent='Точно удалить?';return}try{await ok(sb.from('wt_roles').delete().eq('key',k));toast('Роль удалена');await loadRL();roleSheet()}catch(err){fail(err)}return}
     return;
   }
   if(sheetKind==='regs'){
@@ -559,12 +593,14 @@ $('#sheet').addEventListener('click',async e=>{
   if(t.id==='del'){if(!delArm){delArm=true;t.textContent='Точно удалить?';return}const id=curId;closeSheet();try{await ok(sb.from('wt_tasks').delete().eq('id',id));toast('Задача удалена');later('t',loadT)}catch(err){fail(err)}}
 });
 $('#sheet').addEventListener('change',async e=>{
-  const r=e.target.closest('[data-mrole]');if(r){try{await ok(sb.from('wt_members').update({role:r.value}).eq('user_id',r.dataset.mrole));later('team',loadTeam)}catch(err){fail(err)}return}
+  const r=e.target.closest('[data-mrole]');if(r){try{await ok(sb.from('wt_members').update({role:r.value}).eq('user_id',r.dataset.mrole));later('team',loadTeam)}catch(err){toast(/руководител/i.test(err.message||'')?'В команде должен остаться хотя бы один руководитель':'Не удалось сохранить');later('team',loadTeam)}return}
   const g=e.target.closest('[data-mreg]');if(g){try{await ok(sb.from('wt_members').update({region:g.value}).eq('user_id',g.dataset.mreg));later('team',loadTeam)}catch(err){fail(err)}return}
   const i=e.target.closest('[data-ci]');if(!i)return;sync();draft.checklist[+i.dataset.ci].d=i.checked;taskSheet();saveChecklist();
 });
 $('#sheet').addEventListener('submit',async e=>{
   e.preventDefault();const f=e.target;
+  if(f.dataset.rlkey)return roleSave(f);
+  if(f.id==='rl-add')return roleAdd();
   if(f.dataset.rgid)return regSave(f.dataset.rgid,f.querySelector('input').value);
   if(f.id==='rg-add')return regSave('',$('#rg-new').value);
   if(f.dataset.pwfor){const v=f.querySelector('input').value;try{await admin({action:'reset',user_id:f.dataset.pwfor,password:v});toast('Пароль изменён');f.remove()}catch(err){toast(err.message)}return}
