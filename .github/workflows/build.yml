@@ -7,8 +7,6 @@ on:
 
 permissions:
   contents: write
-  pages: write
-  id-token: write
 
 concurrency:
   group: build
@@ -18,26 +16,25 @@ jobs:
   web:
     name: Интерфейс (GitHub Pages)
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deploy.outputs.page_url }}
     steps:
       - uses: actions/checkout@v5
-      - name: Собрать сайт
+      - name: Собрать и опубликовать сайт
         run: |
           V="1.${{ github.run_number }}"
           APK=$(node -p "require('./package.json').version")
-          mkdir -p site
-          cp -r web/* site/
-          sed -i "s/__WEBVER__/$V/g" site/index.html
-          printf '{"web":"%s","apk":"%s","apkUrl":"https://github.com/%s/releases/latest/download/zadachi.apk"}\n' "$V" "$APK" "${{ github.repository }}" > site/version.json
-          cat site/version.json
-      - uses: actions/configure-pages@v5
-      - uses: actions/upload-pages-artifact@v4
-        with:
-          path: site
-      - id: deploy
-        uses: actions/deploy-pages@v4
+          mkdir -p "$RUNNER_TEMP/site"
+          cp -r web/* "$RUNNER_TEMP/site/"
+          sed -i "s/__WEBVER__/$V/g" "$RUNNER_TEMP/site/index.html"
+          printf '{"web":"%s","apk":"%s","apkUrl":"https://github.com/%s/releases/latest/download/zadachi.apk"}\n' "$V" "$APK" "${{ github.repository }}" > "$RUNNER_TEMP/site/version.json"
+          touch "$RUNNER_TEMP/site/.nojekyll"
+          cd "$RUNNER_TEMP/site"
+          git init -q -b gh-pages
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git add -A
+          git commit -qm "Интерфейс $V"
+          git push -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" gh-pages
+          cat version.json
 
   apk:
     name: Android APK
