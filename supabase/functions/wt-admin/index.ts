@@ -55,7 +55,7 @@ Deno.serve(async (req) => {
   if (!token) return json({ error: "Нужен вход" }, 401);
   const { data: u, error: uErr } = await admin.auth.getUser(token);
   if (uErr || !u.user) return json({ error: "Нужен вход" }, 401);
-  const { data: me } = await admin.from("wt_members").select("role,active").eq("user_id", u.user.id).maybeSingle();
+  const { data: me } = await admin.from("wt_members").select("role,active,region").eq("user_id", u.user.id).maybeSingle();
   if (!me || !me.active || !adminKeys.includes(me.role)) return json({ error: "Только для руководителя" }, 403);
 
   if (action === "create") {
@@ -63,7 +63,7 @@ Deno.serve(async (req) => {
     const role = String(body.role ?? "staff");
     const { data: roleRow } = await admin.from("wt_roles").select("key").eq("key", role).maybeSingle();
     if (!roleRow) return json({ error: "Такой роли нет" }, 400);
-    const region = String(body.region ?? "").slice(0, 40);
+    const region = me.region ? me.region : String(body.region ?? "").slice(0, 40);
     if (!okLogin(login)) return json({ error: LOGIN_ERR }, 400);
     if (!okPass(body.password)) return json({ error: "Пароль: от 6 символов" }, 400);
     if (!name) return json({ error: "Укажите имя" }, 400);

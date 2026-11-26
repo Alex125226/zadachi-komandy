@@ -324,7 +324,7 @@ function repHTML(){
   <h2 class="grp">Команда${fReg!=='all'?' · '+esc(fReg):''} <span>${tm.length}</span></h2>
   <div class="scroll"><table class="tt2"><thead><tr><th>Сотрудник</th><th>Открыто</th><th>Просроч.</th><th>Готово 7 дн.</th><th>Время 7 дн.</th></tr></thead><tbody>${rowsT.map(r=>`<tr data-who="${esc(r.m.id)}"><td><b>${esc(r.m.name)}</b><small>${esc(ROLES[r.m.role]||'')}${r.m.region?' · '+esc(r.m.region):''}</small></td><td>${r.o}</td><td class="${r.od?'od':''}">${r.od}</td><td>${r.dn}</td><td>${fm(r.min)}</td></tr>`).join('')}</tbody></table></div>
   ${noA?`<p class="note">Без ответственного: ${noA} открытых задач.</p>`:''}
-  ${isMgr?'<div class="acts" style="margin-top:10px"><button class="btn ghost" id="teamBtn">Управление командой</button><button class="btn ghost" id="regBtn">Регионы</button><button class="btn ghost" id="roleBtn">Роли</button></div>':''}
+  ${isMgr?'<div class="acts" style="margin-top:10px"><button class="btn ghost" id="teamBtn">Управление командой</button>'+(meM&&meM.region?'':'<button class="btn ghost" id="regBtn">Регионы</button>')+'<button class="btn ghost" id="roleBtn">Роли</button></div>':''}
   ${fReg==='all'?`<h2 class="grp">Открытые задачи по регионам</h2><div class="rows">${Object.keys(byR).length?Object.entries(byR).sort((a,b)=>b[1]-a[1]).map(([r,n])=>`<div class="r"><span>${esc(r)}${odR[r]?` · <b class="od">${odR[r]} просроч.</b>`:''}</span><em>${n}</em><div class="bar"><i style="width:${n/mr*100}%"></i></div></div>`).join(''):'<div class="r"><span>Открытых задач нет</span></div>'}</div>`:''}
   <h2 class="grp">Время по проектам, 7 дней</h2><div class="rows">${Object.keys(byP).length?Object.entries(byP).sort((a,b)=>b[1]-a[1]).map(([id,m])=>{const p=proj(id);return `<div class="r" style="--c:${esc(p?.color||'#888')}"><span>${esc(p?.name||'Без проекта')}</span><em>${fm(m)}</em><div class="bar"><i style="width:${m/mx*100}%"></i></div></div>`}).join(''):'<div class="r"><span>Пока нет записей времени</span></div>'}</div>
   ${od.length?`<h2 class="grp">Просроченные <span>${od.length}</span></h2>${sortT(od).map(card).join('')}`:''}`;
@@ -452,14 +452,14 @@ function openTeam(){sheetKind='team';teamSheet();$('#ov').hidden=false;history.p
 function teamSheet(){
   const keep={n:$('#n-name')?.value||'',l:$('#n-login')?.value||'',p:$('#n-pass')?.value||'',r:$('#n-reg')?.value??(fReg!=='all'?fReg:''),ro:$('#n-role')?.value||'staff'};
   const opt=(list,cur)=>list.map(([v,n])=>`<option value="${esc(v)}"${v===cur?' selected':''}>${esc(n)}</option>`).join('');
-  const regOpts=[['','Все регионы']].concat(REGIONS.map(r=>[r,r])),roleOpts=RL.map(r=>[r.key,r.name]);
+  const regOpts=meM&&meM.region?[[meM.region,meM.region]]:[['','Все регионы']].concat(REGIONS.map(r=>[r,r])),roleOpts=RL.map(r=>[r.key,r.name]);
   $('#sheet').innerHTML=`<div class="sh-h"><h2>Команда</h2><button class="link" data-close>Закрыть</button></div>
   <h3>Новый сотрудник</h3>
   <label>Имя и фамилия<input id="n-name" value="${esc(keep.n)}" maxlength="60" placeholder="Например, Ирина Коваль"></label>
   <div class="row2"><label>Логин (латиницей)<input id="n-login" value="${esc(keep.l)}" autocapitalize="off" autocomplete="off" placeholder="irina"></label><label>Пароль<input id="n-pass" value="${esc(keep.p)}" autocomplete="off" placeholder="от 6 символов"></label></div>
   <div class="row2"><label>Роль<select id="n-role">${opt(roleOpts,keep.ro)}</select></label><label>Регион<select id="n-reg">${opt(regOpts,keep.r)}</select></label></div>
   <button class="btn acc" id="n-add" style="width:100%;margin-top:12px">Создать доступ</button>
-  <p class="note">Передайте сотруднику логин и пароль — он войдёт с ними в приложение.</p>
+  <p class="note">Передайте сотруднику логин и пароль. Сотрудник с регионом видит только задачи, людей и чат своего региона, плюс общий чат и задачи без региона. «Все регионы» — видит всё.</p>
   <h3>Сотрудники <span>${TEAM.filter(m=>m.active).length}</span></h3>
   ${TEAM.map(m=>`<div class="mem${m.active?'':' off'}"><b>${esc(m.name)}${m.id===me?' (вы)':''}<small>логин: ${esc(m.login)}${m.active?'':' · заблокирован'}</small></b>
    <select data-mrole="${esc(m.id)}" aria-label="Роль"${m.id===me?' disabled':''}>${opt(roleOpts,m.role)}</select><select data-mreg="${esc(m.id)}" aria-label="Регион">${opt(regOpts,m.region)}</select>
@@ -594,7 +594,7 @@ $('#sheet').addEventListener('click',async e=>{
 });
 $('#sheet').addEventListener('change',async e=>{
   const r=e.target.closest('[data-mrole]');if(r){try{await ok(sb.from('wt_members').update({role:r.value}).eq('user_id',r.dataset.mrole));later('team',loadTeam)}catch(err){toast(/руководител/i.test(err.message||'')?'В команде должен остаться хотя бы один руководитель':'Не удалось сохранить');later('team',loadTeam)}return}
-  const g=e.target.closest('[data-mreg]');if(g){try{await ok(sb.from('wt_members').update({region:g.value}).eq('user_id',g.dataset.mreg));later('team',loadTeam)}catch(err){fail(err)}return}
+  const g=e.target.closest('[data-mreg]');if(g){try{await ok(sb.from('wt_members').update({region:g.value}).eq('user_id',g.dataset.mreg));toast(g.value?'Теперь видит только регион '+g.value:'Теперь видит все регионы');later('team',loadTeam)}catch(err){toast(/свой регион/i.test(err.message||'')?'Можно назначать только свой регион':'Не удалось сохранить');later('team',loadTeam)}return}
   const i=e.target.closest('[data-ci]');if(!i)return;sync();draft.checklist[+i.dataset.ci].d=i.checked;taskSheet();saveChecklist();
 });
 $('#sheet').addEventListener('submit',async e=>{
