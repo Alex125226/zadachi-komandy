@@ -151,6 +151,9 @@ label input,label select,label textarea,.inl input{display:block;width:100%;marg
 .msg .who{font-size:12px;font-weight:600;color:var(--acc)}
 .msg p{margin:0;white-space:pre-wrap;overflow-wrap:anywhere}
 .msg time{display:block;text-align:right;font-size:11px;opacity:.65}
+.msg .mdel{display:none;margin-top:6px;border:0;border-radius:8px;background:var(--warn);color:#fff;font:600 13px Inter,sans-serif;padding:6px 12px;min-height:34px}
+.msg.sel .mdel{display:inline-block}
+.msg.cd{cursor:pointer}
 .tlink{display:block;margin-top:4px;border:0;background:none;padding:0;color:inherit;text-decoration:underline;font-size:13px;text-align:left}
 .composer{position:fixed;left:0;right:0;bottom:calc(60px + env(safe-area-inset-bottom));z-index:6;display:flex;gap:8px;padding:8px 12px;background:var(--ice);border-top:1px solid var(--line)}
 .composer[hidden]{display:none}
@@ -340,7 +343,8 @@ function chatHTML(){
   let lastDay='';
   return '<div class="msgs">'+ms_.map(m=>{const d=new Date(m.at),dk=day(d);const sep=dk!==lastDay?`<div class="day">${dk===today()?'Сегодня':pad(d.getDate())+'.'+pad(d.getMonth()+1)+'.'+d.getFullYear()}</div>`:'';lastDay=dk;
     const mine=m.by===me,t=m.taskId?T.find(x=>x.id===m.taskId):null;
-    return sep+`<div class="msg${mine?' me':''}">${mine?'':`<div class="who">${esc(nm(m.by))}</div>`}<p>${esc(m.text)}</p>${t?`<button class="tlink" data-open="${esc(t.id)}">Задача: ${esc(t.title)}</button>`:''}<time>${pad(d.getHours())}:${pad(d.getMinutes())}</time></div>`}).join('')+'</div>';
+    const cd=mine||isMgr;
+    return sep+`<div class="msg${mine?' me':''}${cd?' cd':''}" data-mid="${esc(m.id)}">${mine?'':`<div class="who">${esc(nm(m.by))}</div>`}<p>${esc(m.text)}</p>${t?`<button class="tlink" data-open="${esc(t.id)}">Задача: ${esc(t.title)}</button>`:''}<time>${pad(d.getHours())}:${pad(d.getMinutes())}</time>${cd?`<button class="mdel" data-mdel="${esc(m.id)}">Удалить</button>`:''}</div>`}).join('')+(CH.some(m=>m.by===me)||isMgr?'<p class="note" style="text-align:center">Нажмите на сообщение, чтобы удалить его</p>':'')+'</div>';
 }
 function render(){
   document.body.classList.toggle('chat',view==='chat');
@@ -548,8 +552,11 @@ $('#composer').addEventListener('submit',async e=>{e.preventDefault();const i=$(
 async function sendMsg(text,taskId){
   try{await ok(sb.from('wt_chat').insert({text:text.slice(0,2000),region:chKey(fReg),task_id:taskId||null,author:me}));later('ch',loadCH)}catch(e){fail(e)}
 }
-$('#view').addEventListener('click',e=>{
+$('#view').addEventListener('click',async e=>{
   const op=e.target.closest('[data-open]');if(op)return openTask(op.dataset.open);
+  const md=e.target.closest('[data-mdel]');if(md){e.stopPropagation();if(md.dataset.arm!=='1'){md.dataset.arm='1';md.textContent='Точно удалить?';return}
+    const id=md.dataset.mdel;CH=CH.filter(m=>m.id!==id);render();try{await ok(sb.from('wt_chat').delete().eq('id',id));toast('Сообщение удалено')}catch(err){fail(err)}later('ch',loadCH);return}
+  const mg=e.target.closest('.msg.cd');if(mg){const on=!mg.classList.contains('sel');document.querySelectorAll('.msg.sel').forEach(x=>x.classList.remove('sel'));if(on)mg.classList.add('sel');return}
   if(e.target.closest('#teamBtn'))return openTeam();
   if(e.target.closest('#regBtn'))return openRegs();
   if(e.target.closest('#roleBtn'))return openRoles();
