@@ -75,8 +75,17 @@ Deno.serve(async (req) => {
 
   const uid = String(body.user_id ?? "");
   if (!/^[0-9a-f-]{36}$/.test(uid)) return json({ error: "Неверный сотрудник" }, 400);
-  const { data: target } = await admin.from("wt_members").select("user_id").eq("user_id", uid).maybeSingle();
+  const { data: target } = await admin.from("wt_members").select("user_id,regions").eq("user_id", uid).maybeSingle();
   if (!target) return json({ error: "Сотрудник не найден" }, 404);
+  const myRegs: string[] = me.regions ?? [], tRegs: string[] = target.regions ?? [];
+  if (myRegs.length && (!tRegs.length || !tRegs.every((r) => myRegs.includes(r)))) return json({ error: "Этот сотрудник не из ваших регионов" }, 403);
+
+  if (action === "delete") {
+    if (uid === u.user.id) return json({ error: "Нельзя удалить себя" }, 400);
+    const { error } = await admin.auth.admin.deleteUser(uid);
+    if (error) return json({ error: /руководител/i.test(error.message) ? "В команде должен остаться хотя бы один руководитель" : "Не удалось удалить сотрудника" }, 400);
+    return json({ ok: true });
+  }
 
   if (action === "reset") {
     if (!okPass(body.password)) return json({ error: "Пароль: от 6 символов" }, 400);

@@ -239,7 +239,7 @@ function fail(e){console.warn(e);toast(/network|fetch/i.test(e&&e.message||'')?'
 const ok=async(p)=>{const r=await p;if(r&&r.error)throw r.error;return r&&r.data};
 const proj=id=>P.find(p=>p.id===id);
 const member=id=>TEAM.find(m=>m.id===id);
-const nm=id=>names[id]||'Сотрудник';
+const nm=id=>id?(names[id]||'Сотрудник'):'Удалённый сотрудник';
 const aName=t=>t.assigneeId?nm(t.assigneeId):'';
 const taskProj=id=>{const t=T.find(x=>x.id===id);return t?t.projectId:''};
 const timeFor=id=>TM.filter(x=>x.taskId===id).reduce((s,x)=>s+(+x.min||0),0);
@@ -469,10 +469,11 @@ function teamSheet(){
   <label>Роль<select id="n-role">${opt(roleOpts,keep.ro)}</select></label><label>Регионы (можно несколько)</label>${chips('new',newRegs)}
   <button class="btn acc" id="n-add" style="width:100%;margin-top:12px">Создать доступ</button>
   <p class="note">Передайте сотруднику логин и пароль. Сотрудник видит задачи, людей и чаты только выбранных регионов, плюс общий чат и задачи без региона. «Все регионы» — видит всё.</p>
+  <p class="note">«Заблокировать» — временно закрыть доступ. «Удалить» — убрать навсегда: его задачи, сообщения и время останутся в истории как «Удалённый сотрудник», задачи на нём станут без ответственного.</p>
   <h3>Сотрудники <span>${TEAM.filter(m=>m.active).length}</span></h3>
   ${TEAM.map(m=>`<div class="mem${m.active?'':' off'}"><b>${esc(m.name)}${m.id===me?' (вы)':''}<small>логин: ${esc(m.login)}${m.active?'':' · заблокирован'}</small></b>
    <select data-mrole="${esc(m.id)}" aria-label="Роль"${m.id===me?' disabled':''}>${opt(roleOpts,m.role)}</select>
-   ${m.id===me&&!isMgr?'':chips(m.id,m.regions)}${m.id===me?'':`<button class="link" data-mpass="${esc(m.id)}">Пароль</button><button class="link" data-mblock="${esc(m.id)}" data-on="${m.active?1:0}">${m.active?'Заблокировать':'Вернуть доступ'}</button>`}</div>`).join('')}`;
+   ${m.id===me&&!isMgr?'':chips(m.id,m.regions)}${m.id===me?'':`<button class="link" data-mpass="${esc(m.id)}">Пароль</button><button class="link" data-mblock="${esc(m.id)}" data-on="${m.active?1:0}">${m.active?'Заблокировать':'Вернуть доступ'}</button><button class="link" style="color:var(--warn)" data-mdelu="${esc(m.id)}">Удалить</button>`}</div>`).join('')}`;
 }
 async function addMember(){
   const b={action:'create',name:$('#n-name').value.trim(),login:$('#n-login').value.trim().toLowerCase(),password:$('#n-pass').value,role:$('#n-role').value,regions:newRegs||[]};
@@ -601,6 +602,8 @@ $('#sheet').addEventListener('click',async e=>{
       try{await ok(sb.from('wt_members').update({regions:next}).eq('user_id',id));toast(next.length?'Видит: '+next.join(', '):'Видит все регионы');await loadTeam();teamSheet()}catch(err){toast(/свои регионы/i.test(err.message||'')?'Можно назначать только свои регионы':'Не удалось сохранить');await loadTeam();teamSheet()}
       return}
     const pw=t.closest('[data-mpass]');if(pw){const box=pw.closest('.mem');if(box.querySelector('.inl'))return;box.insertAdjacentHTML('beforeend',`<form class="inl" data-pwfor="${esc(pw.dataset.mpass)}" style="flex-basis:100%"><input placeholder="Новый пароль" autocomplete="off"><button class="btn ghost">OK</button></form>`);box.querySelector('input').focus();return}
+    const du=t.closest('[data-mdelu]');if(du){const m=member(du.dataset.mdelu);if(du.dataset.arm!=='1'){du.dataset.arm='1';du.textContent='Удалить '+(m?m.name:'')+' навсегда?';return}
+      du.textContent='Удаляю…';try{await admin({action:'delete',user_id:du.dataset.mdelu});toast('Сотрудник удалён');await loadTeam();teamSheet();later('t',loadT)}catch(err){toast(err.message);teamSheet()}return}
     const bl=t.closest('[data-mblock]');if(bl){if(bl.dataset.arm!=='1'){bl.dataset.arm='1';bl.textContent='Точно?';return}try{await admin({action:bl.dataset.on==='1'?'block':'unblock',user_id:bl.dataset.mblock});toast('Готово');await loadTeam();teamSheet()}catch(err){toast(err.message)}return}
     return;
   }
