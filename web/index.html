@@ -253,7 +253,9 @@ async function loadT(){const prev=new Map(T.map(t=>[t.id,t.assigneeId]));const f
   if(!first&&me)T.forEach(t=>{if(t.assigneeId===me&&prev.get(t.id)!==me&&t.createdBy!==me){notify('Вам назначена задача: '+t.title)}})}
 async function loadTM(){TM=(await ok(sb.from('wt_time').select('*').order('created_at',{ascending:false}).limit(3000))).map(r=>({id:r.id,taskId:r.task_id,min:r.minutes,at:ms(r.created_at),by:r.user_id}))}
 async function loadCH(){CH=(await ok(sb.from('wt_chat').select('*').order('created_at',{ascending:false}).limit(600))).map(r=>({id:r.id,region:r.region||'',taskId:r.task_id||'',by:r.author,text:r.text,at:ms(r.created_at)})).reverse()}
-async function loadTeam(){TEAM=(await ok(sb.from('wt_members').select('*').order('name'))).map(r=>({id:r.user_id,name:r.name,login:r.login,role:r.role,region:r.region||'',active:r.active}));names={};TEAM.forEach(m=>names[m.id]=m.name);meM=member(me);calcPerms()}
+async function loadTeam(){TEAM=(await ok(sb.from('wt_members').select('*').order('name'))).map(r=>({id:r.user_id,name:r.name,login:r.login,role:r.role,regions:Array.isArray(r.regions)?r.regions:(r.region?[r.region]:[]),region:r.region||'',active:r.active}));names={};TEAM.forEach(m=>names[m.id]=m.name);meM=member(me);calcPerms()}
+const myRegs=()=>meM&&meM.regions||[];const restricted=()=>myRegs().length>0;
+const regLabel=a=>a&&a.length?a.join(', '):'все регионы';
 function calcPerms(){const r=meM&&meM.active?RL.find(x=>x.key===meM.role):null;isMgr=!!(r&&r.is_admin);canProj=isMgr||!!(r&&r.can_projects);canDel=isMgr||!!(r&&r.can_delete)}
 async function loadRL(){RL=await ok(sb.from('wt_roles').select('*').order('sort').order('name'));ROLES={};RL.forEach(r=>ROLES[r.key]=r.name);calcPerms()}
 async function loadRG(){RG=(await ok(sb.from('wt_regions').select('*').order('sort').order('name'))).map(r=>({id:r.id,name:r.name,sort:r.sort}));REGIONS=RG.map(r=>r.name);if(fReg!=='all'&&!REGIONS.includes(fReg))fReg='all'}
@@ -273,7 +275,7 @@ function subscribe(){
    .on('postgres_changes',{event:'*',schema:'public',table:'wt_regions'},()=>later('rg',async()=>{await loadRG();await loadT()}))
    .on('postgres_changes',{event:'*',schema:'public',table:'wt_comments'},p=>{const n=p.new||{},o=p.old||{};if(curId&&(n.task_id===curId||o.task_id===curId))later('c',loadCM)})
    .on('postgres_changes',{event:'*',schema:'public',table:'wt_chat'},p=>{const n=p.new;
-      if(p.eventType==='INSERT'&&n&&n.author!==me&&!(view==='chat'&&(n.region||'')===chKey(fReg))&&(!n.region||n.region===(meM&&meM.region)||isMgr))notify((n.region?n.region+' · ':'')+nm(n.author)+': '+n.text);
+      if(p.eventType==='INSERT'&&n&&n.author!==me&&!(view==='chat'&&(n.region||'')===chKey(fReg))&&(!n.region||myRegs().includes(n.region)||!restricted()))notify((n.region?n.region+' · ':'')+nm(n.author)+': '+n.text);
       later('ch',loadCH)})
    .subscribe();
 }
@@ -317,14 +319,14 @@ function repHTML(){
   const byR={};open.forEach(t=>{const r=t.region||'Без региона';byR[r]=(byR[r]||0)+1});const mr=Math.max(1,...Object.values(byR));
   const odR={};od.forEach(t=>{const r=t.region||'Без региона';odR[r]=(odR[r]||0)+1});
   const byP={};tw.forEach(x=>{const k=taskProj(x.taskId);byP[k]=(byP[k]||0)+(+x.min||0)});const mx=Math.max(1,...Object.values(byP));
-  const tm=TEAM.filter(m=>m.active&&(fReg==='all'||m.region===fReg||RL.find(r=>r.key===m.role)?.is_admin));
+  const tm=TEAM.filter(m=>m.active&&(fReg==='all'||!m.regions.length||m.regions.includes(fReg)));
   const rowsT=tm.map(m=>{const mt=ts.filter(t=>t.assigneeId===m.id);return{m,o:mt.filter(t=>t.status!=='done').length,od:mt.filter(overdue).length,dn:mt.filter(t=>t.status==='done'&&(t.doneAt||0)>wk).length,min:tw.filter(x=>x.by===m.id).reduce((s,x)=>s+(+x.min||0),0)}}).sort((a,b)=>b.od-a.od||b.o-a.o);
   const noA=open.filter(t=>!t.assigneeId).length;
   return `<div class="kpis"><div class="kpi"><b>${open.length}</b><span>открытых задач</span></div><div class="kpi ${od.length?'hot':''}"><b>${od.length}</b><span>просрочено</span></div><div class="kpi"><b>${dn.length}</b><span>готово за 7 дней</span></div><div class="kpi"><b>${fm(tw.reduce((s,x)=>s+(+x.min||0),0))}</b><span>время за 7 дней</span></div></div>
   <h2 class="grp">Команда${fReg!=='all'?' · '+esc(fReg):''} <span>${tm.length}</span></h2>
-  <div class="scroll"><table class="tt2"><thead><tr><th>Сотрудник</th><th>Открыто</th><th>Просроч.</th><th>Готово 7 дн.</th><th>Время 7 дн.</th></tr></thead><tbody>${rowsT.map(r=>`<tr data-who="${esc(r.m.id)}"><td><b>${esc(r.m.name)}</b><small>${esc(ROLES[r.m.role]||'')}${r.m.region?' · '+esc(r.m.region):''}</small></td><td>${r.o}</td><td class="${r.od?'od':''}">${r.od}</td><td>${r.dn}</td><td>${fm(r.min)}</td></tr>`).join('')}</tbody></table></div>
+  <div class="scroll"><table class="tt2"><thead><tr><th>Сотрудник</th><th>Открыто</th><th>Просроч.</th><th>Готово 7 дн.</th><th>Время 7 дн.</th></tr></thead><tbody>${rowsT.map(r=>`<tr data-who="${esc(r.m.id)}"><td><b>${esc(r.m.name)}</b><small>${esc(ROLES[r.m.role]||'')}${' · '+esc(regLabel(r.m.regions))}</small></td><td>${r.o}</td><td class="${r.od?'od':''}">${r.od}</td><td>${r.dn}</td><td>${fm(r.min)}</td></tr>`).join('')}</tbody></table></div>
   ${noA?`<p class="note">Без ответственного: ${noA} открытых задач.</p>`:''}
-  ${isMgr?'<div class="acts" style="margin-top:10px"><button class="btn ghost" id="teamBtn">Управление командой</button>'+(meM&&meM.region?'':'<button class="btn ghost" id="regBtn">Регионы</button>')+'<button class="btn ghost" id="roleBtn">Роли</button></div>':''}
+  ${isMgr?'<div class="acts" style="margin-top:10px"><button class="btn ghost" id="teamBtn">Управление командой</button>'+(restricted()?'':'<button class="btn ghost" id="regBtn">Регионы</button>')+'<button class="btn ghost" id="roleBtn">Роли</button></div>':''}
   ${fReg==='all'?`<h2 class="grp">Открытые задачи по регионам</h2><div class="rows">${Object.keys(byR).length?Object.entries(byR).sort((a,b)=>b[1]-a[1]).map(([r,n])=>`<div class="r"><span>${esc(r)}${odR[r]?` · <b class="od">${odR[r]} просроч.</b>`:''}</span><em>${n}</em><div class="bar"><i style="width:${n/mr*100}%"></i></div></div>`).join(''):'<div class="r"><span>Открытых задач нет</span></div>'}</div>`:''}
   <h2 class="grp">Время по проектам, 7 дней</h2><div class="rows">${Object.keys(byP).length?Object.entries(byP).sort((a,b)=>b[1]-a[1]).map(([id,m])=>{const p=proj(id);return `<div class="r" style="--c:${esc(p?.color||'#888')}"><span>${esc(p?.name||'Без проекта')}</span><em>${fm(m)}</em><div class="bar"><i style="width:${m/mx*100}%"></i></div></div>`}).join(''):'<div class="r"><span>Пока нет записей времени</span></div>'}</div>
   ${od.length?`<h2 class="grp">Просроченные <span>${od.length}</span></h2>${sortT(od).map(card).join('')}`:''}`;
@@ -363,7 +365,7 @@ function render(){
 /* ---------- Задача ---------- */
 function openTask(id){
   const t=id?T.find(x=>x.id===id):null;if(id&&!t)return;
-  draft=t?JSON.parse(JSON.stringify(t)):{title:'',desc:'',projectId:fProj!=='all'?fProj:'',region:fReg!=='all'?fReg:(meM&&meM.region||''),assigneeId:isMgr?'':(me||''),status:'todo',priority:0,due:'',checklist:[]};
+  draft=t?JSON.parse(JSON.stringify(t)):{title:'',desc:'',projectId:fProj!=='all'?fProj:'',region:fReg!=='all'?fReg:(myRegs().length===1?myRegs()[0]:''),assigneeId:isMgr?'':(me||''),status:'todo',priority:0,due:'',checklist:[]};
   curId=id||null;sheetKind='task';delArm=false;CM=[];
   taskSheet();$('#ov').hidden=false;history.pushState({s:1},'');
   if(curId)loadCM().catch(()=>{});else setTimeout(()=>$('#f-title')?.focus(),80);
@@ -371,14 +373,14 @@ function openTask(id){
 function sync(){if(sheetKind!=='task')return;draft.title=$('#f-title').value;draft.desc=$('#f-desc').value;draft.projectId=$('#f-proj').value;draft.region=$('#f-reg').value;draft.priority=+$('#f-pri').value;draft.assigneeId=$('#f-asid').value;draft.due=$('#f-due').value}
 function taskSheet(){
   const cl=draft.checklist||[];
-  const team=TEAM.filter(m=>m.active||m.id===draft.assigneeId).sort((a,b)=>(a.region===draft.region?0:1)-(b.region===draft.region?0:1)||a.name.localeCompare(b.name));
+  const team=TEAM.filter(m=>m.active||m.id===draft.assigneeId).sort((a,b)=>(a.regions.includes(draft.region)?0:1)-(b.regions.includes(draft.region)?0:1)||a.name.localeCompare(b.name));
   $('#sheet').innerHTML=`<div class="sh-h"><h2>${curId?'Задача':'Новая задача'}</h2><button class="link" data-close>Закрыть</button></div>
   <label>Название<input id="f-title" value="${esc(draft.title)}" placeholder="Что нужно сделать" maxlength="300"></label>
   <div class="seg" id="f-st">${ST.map(s=>`<button data-s="${s.k}" aria-pressed="${draft.status===s.k}">${s.n}</button>`).join('')}</div>
   <label>Описание<textarea id="f-desc" rows="3" placeholder="Подробности, адрес ТТ, контакты">${esc(draft.desc)}</textarea></label>
   <div class="row2"><label>Регион<select id="f-reg"><option value="">Без региона</option>${(draft.region&&!REGIONS.includes(draft.region)?[draft.region]:[]).concat(REGIONS).map(r=>`<option${r===draft.region?' selected':''}>${esc(r)}</option>`).join('')}</select></label>
   <label>Проект<select id="f-proj"><option value="">Без проекта</option>${P.map(p=>`<option value="${esc(p.id)}"${p.id===draft.projectId?' selected':''}>${esc(p.name)}</option>`).join('')}</select></label></div>
-  <label>Ответственный<select id="f-asid"><option value="">Не назначен</option>${team.map(m=>`<option value="${esc(m.id)}"${m.id===draft.assigneeId?' selected':''}>${esc(m.name)}${m.region?' · '+esc(m.region):''}${m.id===me?' (вы)':''}</option>`).join('')}</select></label>
+  <label>Ответственный<select id="f-asid"><option value="">Не назначен</option>${team.map(m=>`<option value="${esc(m.id)}"${m.id===draft.assigneeId?' selected':''}>${esc(m.name)}${m.regions.length?' · '+esc(m.regions.join(', ')):''}${m.id===me?' (вы)':''}</option>`).join('')}</select></label>
   <div class="row2"><label>Приоритет<select id="f-pri">${PRI.map((n,i)=>`<option value="${i}"${+draft.priority===i?' selected':''}>${n}</option>`).join('')}</select></label><label>Срок<input id="f-due" type="date" value="${esc(draft.due)}"></label></div>
   <h3>Чек-лист <span>${cl.filter(c=>c.d).length}/${cl.length}</span></h3>
   <ul class="cl">${cl.map((c,i)=>`<li class="${c.d?'d':''}"><label><input type="checkbox" data-ci="${i}"${c.d?' checked':''}>${esc(c.t)}</label><button data-cx="${i}" aria-label="Удалить пункт">×</button></li>`).join('')}</ul>
@@ -448,28 +450,31 @@ async function admin(body){
   if(error){let m='Ошибка сервера';try{const j=await error.context.json();if(j&&j.error)m=j.error}catch(_){}throw new Error(m)}
   if(data&&data.error)throw new Error(data.error);return data;
 }
-function openTeam(){sheetKind='team';teamSheet();$('#ov').hidden=false;history.pushState({s:1},'')}
+let newRegs=null;
+function openTeam(){sheetKind='team';newRegs=null;teamSheet();$('#ov').hidden=false;history.pushState({s:1},'')}
 function teamSheet(){
-  const keep={n:$('#n-name')?.value||'',l:$('#n-login')?.value||'',p:$('#n-pass')?.value||'',r:$('#n-reg')?.value??(fReg!=='all'?fReg:''),ro:$('#n-role')?.value||'staff'};
+  const keep={n:$('#n-name')?.value||'',l:$('#n-login')?.value||'',p:$('#n-pass')?.value||'',ro:$('#n-role')?.value||'staff'};
+  if(!newRegs)newRegs=restricted()?[...myRegs()]:(fReg!=='all'?[fReg]:[]);
   const opt=(list,cur)=>list.map(([v,n])=>`<option value="${esc(v)}"${v===cur?' selected':''}>${esc(n)}</option>`).join('');
-  const regOpts=meM&&meM.region?[[meM.region,meM.region]]:[['','Все регионы']].concat(REGIONS.map(r=>[r,r])),roleOpts=RL.map(r=>[r.key,r.name]);
+  const avail=restricted()?myRegs():REGIONS,roleOpts=RL.map(r=>[r.key,r.name]);
+  const chips=(id,cur)=>`<div class="chips rgc" style="margin:6px 0 0;flex-wrap:wrap">${restricted()?'':`<button type="button" data-rgt="${esc(id)}" data-r="" aria-pressed="${!cur.length}">Все регионы</button>`}${avail.map(r=>`<button type="button" data-rgt="${esc(id)}" data-r="${esc(r)}" aria-pressed="${cur.includes(r)}">${esc(r)}</button>`).join('')}</div>`;
   $('#sheet').innerHTML=`<div class="sh-h"><h2>Команда</h2><button class="link" data-close>Закрыть</button></div>
   <h3>Новый сотрудник</h3>
   <label>Имя и фамилия<input id="n-name" value="${esc(keep.n)}" maxlength="60" placeholder="Например, Ирина Коваль"></label>
   <div class="row2"><label>Логин (латиницей)<input id="n-login" value="${esc(keep.l)}" autocapitalize="off" autocomplete="off" placeholder="irina"></label><label>Пароль<input id="n-pass" value="${esc(keep.p)}" autocomplete="off" placeholder="от 6 символов"></label></div>
-  <div class="row2"><label>Роль<select id="n-role">${opt(roleOpts,keep.ro)}</select></label><label>Регион<select id="n-reg">${opt(regOpts,keep.r)}</select></label></div>
+  <label>Роль<select id="n-role">${opt(roleOpts,keep.ro)}</select></label><label>Регионы (можно несколько)</label>${chips('new',newRegs)}
   <button class="btn acc" id="n-add" style="width:100%;margin-top:12px">Создать доступ</button>
-  <p class="note">Передайте сотруднику логин и пароль. Сотрудник с регионом видит только задачи, людей и чат своего региона, плюс общий чат и задачи без региона. «Все регионы» — видит всё.</p>
+  <p class="note">Передайте сотруднику логин и пароль. Сотрудник видит задачи, людей и чаты только выбранных регионов, плюс общий чат и задачи без региона. «Все регионы» — видит всё.</p>
   <h3>Сотрудники <span>${TEAM.filter(m=>m.active).length}</span></h3>
   ${TEAM.map(m=>`<div class="mem${m.active?'':' off'}"><b>${esc(m.name)}${m.id===me?' (вы)':''}<small>логин: ${esc(m.login)}${m.active?'':' · заблокирован'}</small></b>
-   <select data-mrole="${esc(m.id)}" aria-label="Роль"${m.id===me?' disabled':''}>${opt(roleOpts,m.role)}</select><select data-mreg="${esc(m.id)}" aria-label="Регион">${opt(regOpts,m.region)}</select>
-   ${m.id===me?'':`<button class="link" data-mpass="${esc(m.id)}">Пароль</button><button class="link" data-mblock="${esc(m.id)}" data-on="${m.active?1:0}">${m.active?'Заблокировать':'Вернуть доступ'}</button>`}</div>`).join('')}`;
+   <select data-mrole="${esc(m.id)}" aria-label="Роль"${m.id===me?' disabled':''}>${opt(roleOpts,m.role)}</select>
+   ${m.id===me&&!isMgr?'':chips(m.id,m.regions)}${m.id===me?'':`<button class="link" data-mpass="${esc(m.id)}">Пароль</button><button class="link" data-mblock="${esc(m.id)}" data-on="${m.active?1:0}">${m.active?'Заблокировать':'Вернуть доступ'}</button>`}</div>`).join('')}`;
 }
 async function addMember(){
-  const b={action:'create',name:$('#n-name').value.trim(),login:$('#n-login').value.trim().toLowerCase(),password:$('#n-pass').value,role:$('#n-role').value,region:$('#n-reg').value};
+  const b={action:'create',name:$('#n-name').value.trim(),login:$('#n-login').value.trim().toLowerCase(),password:$('#n-pass').value,role:$('#n-role').value,regions:newRegs||[]};
   if(!b.name||!b.login||!b.password)return toast('Заполните имя, логин и пароль');
   const btn=$('#n-add');btn.disabled=true;btn.textContent='Создаю…';
-  try{await admin(b);toast('Готово: логин '+b.login);$('#n-name').value='';$('#n-login').value='';$('#n-pass').value='';await loadTeam();teamSheet()}catch(e){toast(e.message)}finally{const x=$('#n-add');if(x){x.disabled=false;x.textContent='Создать доступ'}}
+  try{await admin(b);toast('Готово: логин '+b.login);newRegs=null;$('#n-name').value='';$('#n-login').value='';$('#n-pass').value='';await loadTeam();teamSheet()}catch(e){toast(e.message)}finally{const x=$('#n-add');if(x){x.disabled=false;x.textContent='Создать доступ'}}
 }
 
 /* ---------- Регионы ---------- */
@@ -478,7 +483,7 @@ function regSheet(){
   const add=$('#rg-new')?.value||'';
   $('#sheet').innerHTML=`<div class="sh-h"><h2>Регионы</h2><button class="link" data-close>Закрыть</button></div>
   <p class="note" style="margin-top:0">При переименовании задачи, сотрудники и чат региона переходят на новое название. При удалении задачи и сотрудники остаются «без региона».</p>
-  ${RG.map((r,i)=>{const n=T.filter(t=>t.region===r.name&&t.status!=='done').length,m=TEAM.filter(x=>x.region===r.name&&x.active).length;
+  ${RG.map((r,i)=>{const n=T.filter(t=>t.region===r.name&&t.status!=='done').length,m=TEAM.filter(x=>x.regions.includes(r.name)&&x.active).length;
    return `<form class="mem" data-rgid="${esc(r.id)}"><input value="${esc(r.name)}" maxlength="40" aria-label="Название региона" style="flex:1 1 140px;border:1px solid var(--line);background:var(--card);border-radius:10px;padding:9px 10px;font-size:16px;color:var(--ink)">
    <button class="link" type="submit">Сохранить</button>${i?`<button class="link" type="button" data-rgup="${esc(r.id)}" aria-label="Выше">↑</button>`:''}<button class="link" type="button" data-rgdel="${esc(r.id)}">Удалить</button>
    <small class="note" style="flex-basis:100%;margin:0">${n} открытых задач · ${m} сотрудников</small></form>`}).join('')||'<p class="note">Регионов нет.</p>'}
@@ -521,7 +526,7 @@ async function roleAdd(){
 function openMe(){
   sheetKind='me';
   $('#sheet').innerHTML=`<div class="sh-h"><h2>${esc(meM?meM.name:'Профиль')}</h2><button class="link" data-close>Закрыть</button></div>
-  <p class="note" style="margin-top:0">${esc(ROLES[meM?.role]||'')}${meM?.region?' · '+esc(meM.region):''} · логин ${esc(meM?.login||'')}</p>
+  <p class="note" style="margin-top:0">${esc(ROLES[meM?.role]||'')}${' · '+esc(regLabel(myRegs()))} · логин ${esc(meM?.login||'')}</p>
   <h3>Сменить пароль</h3><form class="inl" id="pw-form"><input id="pw-in" type="password" placeholder="Новый пароль, от 6 символов" autocomplete="new-password"><button class="btn ghost">Сменить</button></form>
   <div class="acts"><button class="btn del" id="logout">Выйти из аккаунта</button></div>
   <p class="ver">Версия интерфейса ${esc(WEB_VER)}${appVer?' · приложение '+esc(appVer):''}</p>`;
@@ -580,6 +585,14 @@ $('#sheet').addEventListener('click',async e=>{
   }
   if(sheetKind==='team'){
     if(t.id==='n-add')return addMember();
+    const rg=t.closest('[data-rgt]');if(rg){const id=rg.dataset.rgt,r=rg.dataset.r;
+      const cur=id==='new'?(newRegs||[]):(member(id)?.regions||[]);
+      let next=r===''?[]:(cur.includes(r)?cur.filter(x=>x!==r):[...cur,r]);
+      if(restricted()&&!next.length)return toast('Нужен хотя бы один регион');
+      if(id==='new'){newRegs=next;rg.parentElement.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b.dataset.r===''?!next.length:next.includes(b.dataset.r)));return}
+      if(id===me&&next.length)return toast('Себе ограничивать регионы не стоит — потеряете доступ к остальным');
+      try{await ok(sb.from('wt_members').update({regions:next}).eq('user_id',id));toast(next.length?'Видит: '+next.join(', '):'Видит все регионы');await loadTeam();teamSheet()}catch(err){toast(/свои регионы/i.test(err.message||'')?'Можно назначать только свои регионы':'Не удалось сохранить');await loadTeam();teamSheet()}
+      return}
     const pw=t.closest('[data-mpass]');if(pw){const box=pw.closest('.mem');if(box.querySelector('.inl'))return;box.insertAdjacentHTML('beforeend',`<form class="inl" data-pwfor="${esc(pw.dataset.mpass)}" style="flex-basis:100%"><input placeholder="Новый пароль" autocomplete="off"><button class="btn ghost">OK</button></form>`);box.querySelector('input').focus();return}
     const bl=t.closest('[data-mblock]');if(bl){if(bl.dataset.arm!=='1'){bl.dataset.arm='1';bl.textContent='Точно?';return}try{await admin({action:bl.dataset.on==='1'?'block':'unblock',user_id:bl.dataset.mblock});toast('Готово');await loadTeam();teamSheet()}catch(err){toast(err.message)}return}
     return;
@@ -594,7 +607,7 @@ $('#sheet').addEventListener('click',async e=>{
 });
 $('#sheet').addEventListener('change',async e=>{
   const r=e.target.closest('[data-mrole]');if(r){try{await ok(sb.from('wt_members').update({role:r.value}).eq('user_id',r.dataset.mrole));later('team',loadTeam)}catch(err){toast(/руководител/i.test(err.message||'')?'В команде должен остаться хотя бы один руководитель':'Не удалось сохранить');later('team',loadTeam)}return}
-  const g=e.target.closest('[data-mreg]');if(g){try{await ok(sb.from('wt_members').update({region:g.value}).eq('user_id',g.dataset.mreg));toast(g.value?'Теперь видит только регион '+g.value:'Теперь видит все регионы');later('team',loadTeam)}catch(err){toast(/свой регион/i.test(err.message||'')?'Можно назначать только свой регион':'Не удалось сохранить');later('team',loadTeam)}return}
+
   const i=e.target.closest('[data-ci]');if(!i)return;sync();draft.checklist[+i.dataset.ci].d=i.checked;taskSheet();saveChecklist();
 });
 $('#sheet').addEventListener('submit',async e=>{
@@ -639,7 +652,7 @@ async function start(){
   try{await loadAll()}catch(e){console.warn(e);$('#auth').hidden=true;$('#view').innerHTML='<div class="empty"><b>Нет связи с сервером</b>Проверьте интернет и откройте приложение снова.<br><br><button class="btn" onclick="location.reload()">Повторить</button></div>';return}
   if(!meM||!meM.active){await sb.auth.signOut();authScreen('login','Нет доступа: обратитесь к руководителю');return}
   $('#auth').hidden=true;
-  const sr=ls.get('ws-reg');fReg=sr&&(sr==='all'||REGIONS.includes(sr))?sr:(!isMgr&&meM.region?meM.region:'all');
+  const sr=ls.get('ws-reg');fReg=sr&&(sr==='all'||REGIONS.includes(sr))?sr:(myRegs().length===1?myRegs()[0]:'all');
   const sm=ls.get('ws-mine');mineOnly=sm===null?!isMgr:sm==='1';
   ready=true;render();tick();subscribe();
 }
