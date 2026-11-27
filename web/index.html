@@ -242,20 +242,21 @@ const ok=async(p)=>{const r=await p;if(r&&r.error)throw r.error;return r&&r.data
 const proj=id=>P.find(p=>p.id===id);
 const member=id=>TEAM.find(m=>m.id===id);
 const nm=id=>id?(names[id]||'Сотрудник'):'Удалённый сотрудник';
-const aName=t=>t.assigneeId?nm(t.assigneeId):'';
+const aName=t=>(t.assignees||[]).map(nm).join(', ');
+const isAs=(t,id)=>(t.assignees||[]).includes(id);
 const taskProj=id=>{const t=T.find(x=>x.id===id);return t?t.projectId:''};
 const timeFor=id=>TM.filter(x=>x.taskId===id).reduce((s,x)=>s+(+x.min||0),0);
 const overdue=t=>t.due&&t.status!=='done'&&t.due<today();
 const inReg=t=>fReg==='all'||t.region===fReg;
-function filtered(){const s=q.trim().toLowerCase();return T.filter(t=>inReg(t)&&(fProj==='all'||t.projectId===fProj)&&(!openOnly||t.status!=='done')&&(!mineOnly||t.assigneeId===me)&&(!fWho||t.assigneeId===fWho)&&(!s||[t.title,aName(t),t.desc].join(' ').toLowerCase().includes(s)))}
+function filtered(){const s=q.trim().toLowerCase();return T.filter(t=>inReg(t)&&(fProj==='all'||t.projectId===fProj)&&(!openOnly||t.status!=='done')&&(!mineOnly||isAs(t,me))&&(!fWho||isAs(t,fWho))&&(!s||[t.title,aName(t),t.desc].join(' ').toLowerCase().includes(s)))}
 const sortT=a=>a.slice().sort((x,y)=>(y.priority||0)-(x.priority||0)||((x.due||'9')<(y.due||'9')?-1:(x.due||'9')>(y.due||'9')?1:0)||(y.updatedAt||0)-(x.updatedAt||0));
 
 /* ---------- Загрузка данных ---------- */
-const mapT=r=>({id:r.id,title:r.title,desc:r.descr||'',projectId:r.project_id||'',region:r.region||'',assigneeId:r.assignee_id||'',status:r.status,priority:r.priority||0,due:r.due||'',checklist:Array.isArray(r.checklist)?r.checklist:[],createdBy:r.created_by||'',createdAt:ms(r.created_at),updatedAt:ms(r.updated_at),doneAt:ms(r.done_at)});
+const mapT=r=>({id:r.id,title:r.title,desc:r.descr||'',projectId:r.project_id||'',region:r.region||'',assignees:Array.isArray(r.assignees)?r.assignees:(r.assignee_id?[r.assignee_id]:[]),status:r.status,priority:r.priority||0,due:r.due||'',checklist:Array.isArray(r.checklist)?r.checklist:[],createdBy:r.created_by||'',createdAt:ms(r.created_at),updatedAt:ms(r.updated_at),doneAt:ms(r.done_at)});
 async function loadP(){P=(await ok(sb.from('wt_projects').select('*').order('created_at'))).map(r=>({id:r.id,name:r.name,color:r.color}))}
-async function loadT(){const prev=new Map(T.map(t=>[t.id,t.assigneeId]));const first=!ready;
+async function loadT(){const prev=new Map(T.map(t=>[t.id,isAs(t,me)]));const first=!ready;
   T=(await ok(sb.from('wt_tasks').select('*').limit(5000))).map(mapT);
-  if(!first&&me)T.forEach(t=>{if(t.assigneeId===me&&prev.get(t.id)!==me&&t.createdBy!==me){notify('Вам назначена задача: '+t.title)}})}
+  if(!first&&me)T.forEach(t=>{if(isAs(t,me)&&!prev.get(t.id)&&t.createdBy!==me){notify('Вам назначена задача: '+t.title)}})}
 async function loadTM(){TM=(await ok(sb.from('wt_time').select('*').order('created_at',{ascending:false}).limit(3000))).map(r=>({id:r.id,taskId:r.task_id,min:r.minutes,at:ms(r.created_at),by:r.user_id}))}
 async function loadCH(){CH=(await ok(sb.from('wt_chat').select('*').order('created_at',{ascending:false}).limit(600))).map(r=>({id:r.id,region:r.region||'',taskId:r.task_id||'',by:r.author,text:r.text,at:ms(r.created_at)})).reverse()}
 async function loadTeam(){TEAM=(await ok(sb.from('wt_members').select('*').order('name'))).map(r=>({id:r.user_id,name:r.name,login:r.login,role:r.role,regions:Array.isArray(r.regions)?r.regions:(r.region?[r.region]:[]),region:r.region||'',active:r.active}));names={};TEAM.forEach(m=>names[m.id]=m.name);meM=member(me);calcPerms()}
@@ -288,11 +289,11 @@ function notify(t){toast(t);try{navigator.vibrate&&navigator.vibrate(120)}catch(
 
 /* ---------- Отрисовка ---------- */
 function card(t){
-  const p=proj(t.projectId),cl=t.checklist||[],cd=cl.filter(c=>c.d).length,tm=timeFor(t.id),mine=t.assigneeId&&t.assigneeId===me;
+  const p=proj(t.projectId),cl=t.checklist||[],cd=cl.filter(c=>c.d).length,tm=timeFor(t.id),mine=isAs(t,me),others=(t.assignees||[]).filter(x=>x!==me).map(nm);
   return `<article class="card ${esc(t.status)}" data-id="${esc(t.id)}">
   <button class="st" data-st="${esc(t.id)}" aria-label="Сменить статус"><span></span></button>
   <div class="cb"><div class="tt">${t.priority>0?`<span class="pri">${t.priority>1?'!! ':'! '}</span>`:''}${esc(t.title)}</div>
-  <div class="meta">${t.region?`<span class="reg">${esc(t.region)}</span>`:''}${p?`<span class="chip" style="--c:${esc(p.color)}">${esc(p.name)}</span>`:''}${t.due?`<span class="${overdue(t)?'od':''}">до ${fd(t.due)}</span>`:''}${aName(t)?`<span${mine?' class="reg"':''}>${mine?'Вы':esc(aName(t))}</span>`:''}${cl.length?`<span>☑ ${cd}/${cl.length}</span>`:''}${tm?`<span>${fm(tm)}</span>`:''}${run&&run.id===t.id?'<span class="od">● таймер</span>':''}</div></div></article>`;
+  <div class="meta">${t.region?`<span class="reg">${esc(t.region)}</span>`:''}${p?`<span class="chip" style="--c:${esc(p.color)}">${esc(p.name)}</span>`:''}${t.due?`<span class="${overdue(t)?'od':''}">до ${fd(t.due)}</span>`:''}${mine?'<span class="reg">Вы</span>':''}${others.length?`<span>${esc(others.join(', '))}</span>`:''}${cl.length?`<span>☑ ${cd}/${cl.length}</span>`:''}${tm?`<span>${fm(tm)}</span>`:''}${run&&run.id===t.id?'<span class="od">● таймер</span>':''}</div></div></article>`;
 }
 function emptyBox(){
   if(!P.length&&view==='proj')return canProj?'<div class="empty"><b>Начните с проекта</b>Например: «Открытие ТТ», «Ремонт», «Закупки».<br><br><button class="btn acc" data-newp>Создать проект</button></div>':'<div class="empty"><b>Проектов пока нет</b>Их создаёт руководитель.</div>';
@@ -325,8 +326,8 @@ function repHTML(){
   const odR={};od.forEach(t=>{const r=t.region||'Без региона';odR[r]=(odR[r]||0)+1});
   const byP={};tw.forEach(x=>{const k=taskProj(x.taskId);byP[k]=(byP[k]||0)+(+x.min||0)});const mx=Math.max(1,...Object.values(byP));
   const tm=TEAM.filter(m=>m.active&&(fReg==='all'||!m.regions.length||m.regions.includes(fReg)));
-  const rowsT=tm.map(m=>{const mt=ts.filter(t=>t.assigneeId===m.id);return{m,o:mt.filter(t=>t.status!=='done').length,od:mt.filter(overdue).length,dn:mt.filter(t=>t.status==='done'&&(t.doneAt||0)>wk).length,min:tw.filter(x=>x.by===m.id).reduce((s,x)=>s+(+x.min||0),0)}}).sort((a,b)=>b.od-a.od||b.o-a.o);
-  const noA=open.filter(t=>!t.assigneeId).length;
+  const rowsT=tm.map(m=>{const mt=ts.filter(t=>isAs(t,m.id));return{m,o:mt.filter(t=>t.status!=='done').length,od:mt.filter(overdue).length,dn:mt.filter(t=>t.status==='done'&&(t.doneAt||0)>wk).length,min:tw.filter(x=>x.by===m.id).reduce((s,x)=>s+(+x.min||0),0)}}).sort((a,b)=>b.od-a.od||b.o-a.o);
+  const noA=open.filter(t=>!(t.assignees||[]).length).length;
   return `<div class="kpis"><div class="kpi"><b>${open.length}</b><span>открытых задач</span></div><div class="kpi ${od.length?'hot':''}"><b>${od.length}</b><span>просрочено</span></div><div class="kpi"><b>${dn.length}</b><span>готово за 7 дней</span></div><div class="kpi"><b>${fm(tw.reduce((s,x)=>s+(+x.min||0),0))}</b><span>время за 7 дней</span></div></div>
   <h2 class="grp">Команда${fReg!=='all'?' · '+esc(fReg):''} <span>${tm.length}</span></h2>
   <div class="scroll"><table class="tt2"><thead><tr><th>Сотрудник</th><th>Открыто</th><th>Просроч.</th><th>Готово 7 дн.</th><th>Время 7 дн.</th></tr></thead><tbody>${rowsT.map(r=>`<tr data-who="${esc(r.m.id)}"><td><b>${esc(r.m.name)}</b><small>${esc(ROLES[r.m.role]||'')}${' · '+esc(regLabel(r.m.regions))}</small></td><td>${r.o}</td><td class="${r.od?'od':''}">${r.od}</td><td>${r.dn}</td><td>${fm(r.min)}</td></tr>`).join('')}</tbody></table></div>
@@ -371,22 +372,22 @@ function render(){
 /* ---------- Задача ---------- */
 function openTask(id){
   const t=id?T.find(x=>x.id===id):null;if(id&&!t)return;
-  draft=t?JSON.parse(JSON.stringify(t)):{title:'',desc:'',projectId:fProj!=='all'?fProj:'',region:fReg!=='all'?fReg:(myRegs().length===1?myRegs()[0]:''),assigneeId:isMgr?'':(me||''),status:'todo',priority:0,due:'',checklist:[]};
+  draft=t?JSON.parse(JSON.stringify(t)):{title:'',desc:'',projectId:fProj!=='all'?fProj:'',region:fReg!=='all'?fReg:(myRegs().length===1?myRegs()[0]:''),assignees:isMgr?[]:(me?[me]:[]),status:'todo',priority:0,due:'',checklist:[]};
   curId=id||null;sheetKind='task';delArm=false;CM=[];
   taskSheet();$('#ov').hidden=false;history.pushState({s:1},'');
   if(curId)loadCM().catch(()=>{});else setTimeout(()=>$('#f-title')?.focus(),80);
 }
-function sync(){if(sheetKind!=='task')return;draft.title=$('#f-title').value;draft.desc=$('#f-desc').value;draft.projectId=$('#f-proj').value;draft.region=$('#f-reg').value;draft.priority=+$('#f-pri').value;draft.assigneeId=$('#f-asid').value;draft.due=$('#f-due').value}
+function sync(){if(sheetKind!=='task')return;draft.title=$('#f-title').value;draft.desc=$('#f-desc').value;draft.projectId=$('#f-proj').value;draft.region=$('#f-reg').value;draft.priority=+$('#f-pri').value;draft.due=$('#f-due').value}
 function taskSheet(){
   const cl=draft.checklist||[];
-  const team=TEAM.filter(m=>m.active||m.id===draft.assigneeId).sort((a,b)=>(a.regions.includes(draft.region)?0:1)-(b.regions.includes(draft.region)?0:1)||a.name.localeCompare(b.name));
+  const team=TEAM.filter(m=>m.active||(draft.assignees||[]).includes(m.id)).sort((a,b)=>(a.regions.includes(draft.region)?0:1)-(b.regions.includes(draft.region)?0:1)||a.name.localeCompare(b.name));
   $('#sheet').innerHTML=`<div class="sh-h"><h2>${curId?'Задача':'Новая задача'}</h2><button class="link" data-close>Закрыть</button></div>
   <label>Название<input id="f-title" value="${esc(draft.title)}" placeholder="Что нужно сделать" maxlength="300"></label>
   <div class="seg" id="f-st">${ST.map(s=>`<button data-s="${s.k}" aria-pressed="${draft.status===s.k}">${s.n}</button>`).join('')}</div>
   <label>Описание<textarea id="f-desc" rows="3" placeholder="Подробности, адрес ТТ, контакты">${esc(draft.desc)}</textarea></label>
   <div class="row2"><label>Регион<select id="f-reg"><option value="">Без региона</option>${(draft.region&&!REGIONS.includes(draft.region)?[draft.region]:[]).concat(REGIONS).map(r=>`<option${r===draft.region?' selected':''}>${esc(r)}</option>`).join('')}</select></label>
   <label>Проект<select id="f-proj"><option value="">Без проекта</option>${P.map(p=>`<option value="${esc(p.id)}"${p.id===draft.projectId?' selected':''}>${esc(p.name)}</option>`).join('')}</select></label></div>
-  <label>Ответственный<select id="f-asid"><option value="">Не назначен</option>${team.map(m=>`<option value="${esc(m.id)}"${m.id===draft.assigneeId?' selected':''}>${esc(m.name)}${m.regions.length?' · '+esc(m.regions.join(', ')):''}${m.id===me?' (вы)':''}</option>`).join('')}</select></label>
+  <label>Ответственные (можно несколько)</label><div class="chips asg" id="f-as" style="margin:6px 0 0;flex-wrap:wrap">${team.map(m=>`<button type="button" data-asg="${esc(m.id)}" aria-pressed="${(draft.assignees||[]).includes(m.id)}">${esc(m.name)}${m.id===me?' (вы)':''}</button>`).join('')||'<span class="note">В команде пока никого</span>'}</div>
   <div class="row2"><label>Приоритет<select id="f-pri">${PRI.map((n,i)=>`<option value="${i}"${+draft.priority===i?' selected':''}>${n}</option>`).join('')}</select></label><label>Срок<input id="f-due" type="date" value="${esc(draft.due)}"></label></div>
   <h3>Чек-лист <span>${cl.filter(c=>c.d).length}/${cl.length}</span></h3>
   <ul class="cl">${cl.map((c,i)=>`<li class="${c.d?'d':''}"><label><input type="checkbox" data-ci="${i}"${c.d?' checked':''}>${esc(c.t)}</label><button data-cx="${i}" aria-label="Удалить пункт">×</button></li>`).join('')}</ul>
@@ -414,7 +415,7 @@ function closeSheet(fromBack){if($('#ov').hidden)return;$('#ov').hidden=true;$('
 async function saveTask(){
   sync();if(!draft.title.trim()){toast('Введите название');$('#f-title').focus();return}
   const old=curId?T.find(t=>t.id===curId):null,now=new Date().toISOString();
-  const d={title:draft.title.trim(),descr:draft.desc,project_id:draft.projectId||null,region:draft.region||'',assignee_id:draft.assigneeId||null,status:draft.status,priority:+draft.priority||0,due:draft.due||null,checklist:draft.checklist||[],updated_at:now};
+  const d={title:draft.title.trim(),descr:draft.desc,project_id:draft.projectId||null,region:draft.region||'',assignees:draft.assignees||[],status:draft.status,priority:+draft.priority||0,due:draft.due||null,checklist:draft.checklist||[],updated_at:now};
   if(draft.status==='done'&&old?.status!=='done')d.done_at=now;
   if(draft.status!=='done')d.done_at=null;
   try{if(curId)await ok(sb.from('wt_tasks').update(d).eq('id',curId));else await ok(sb.from('wt_tasks').insert({...d,created_by:me}));
@@ -610,11 +611,12 @@ $('#sheet').addEventListener('click',async e=>{
     return;
   }
   if(sheetKind!=='task')return;
+  const ag=t.closest('[data-asg]');if(ag){const id=ag.dataset.asg,a=draft.assignees=draft.assignees||[];const i=a.indexOf(id);if(i>=0)a.splice(i,1);else a.push(id);ag.setAttribute('aria-pressed',i<0);return}
   const s=t.closest('[data-s]');if(s){draft.status=s.dataset.s;document.querySelectorAll('#f-st button').forEach(b=>b.setAttribute('aria-pressed',b===s));return}
   const cx=t.closest('[data-cx]');if(cx){sync();draft.checklist.splice(+cx.dataset.cx,1);taskSheet();saveChecklist();return}
   if(t.id==='tmBtn'){run&&run.id===curId?stopTimer():startTimer(curId);return}
   if(t.id==='save')return saveTask();
-  if(t.id==='toChat'){const tk=T.find(x=>x.id===curId);if(!tk)return;closeSheet();fReg=tk.region||'all';view='chat';render();await sendMsg('Обсуждаем задачу'+(tk.assigneeId?' · ответственный: '+nm(tk.assigneeId):'')+(tk.due?' · срок '+fd(tk.due):''),tk.id);$('#msg').focus();return}
+  if(t.id==='toChat'){const tk=T.find(x=>x.id===curId);if(!tk)return;closeSheet();fReg=tk.region||'all';view='chat';render();await sendMsg('Обсуждаем задачу'+((tk.assignees||[]).length?' · ответственные: '+aName(tk):'')+(tk.due?' · срок '+fd(tk.due):''),tk.id);$('#msg').focus();return}
   if(t.id==='del'){if(!delArm){delArm=true;t.textContent='Точно удалить?';return}const id=curId;closeSheet();try{await ok(sb.from('wt_tasks').delete().eq('id',id));toast('Задача удалена');later('t',loadT)}catch(err){fail(err)}}
 });
 $('#sheet').addEventListener('change',async e=>{
