@@ -131,6 +131,14 @@ label input,label select,label textarea,.inl input{display:block;width:100%;marg
 .toast.on{opacity:1}
 .note{font-size:13px;color:var(--mute);margin:12px 0 0}
 .reg{font-weight:600;color:var(--ink)}
+.fl{display:flex;align-items:center;gap:6px;border-bottom:1px solid var(--line)}
+.fl-open{flex:1;display:flex;align-items:center;gap:10px;border:0;background:none;padding:8px 0;text-align:left;min-height:52px;color:var(--ink)}
+.fl-open img{width:44px;height:44px;object-fit:cover;border-radius:8px;background:var(--line);flex:none}
+.fl-ext{width:44px;height:44px;border-radius:8px;background:var(--ice);border:1px solid var(--line);display:grid;place-items:center;font:600 11px Inter,sans-serif;color:var(--mute);flex:none}
+.fl-t{display:flex;flex-direction:column;min-width:0}.fl-t b{font-weight:500;font-size:15px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.fl-t small{color:var(--mute);font-size:12px}
+.fl .link{min-width:44px;font-size:20px;text-decoration:none}
+.fl-add{font-size:15px;color:var(--ink);display:flex;align-items:center;justify-content:center;width:100%;margin-top:8px;cursor:pointer}
+.fl-add.busy{opacity:.5;pointer-events:none}
 .dot{display:inline-block;width:9px;height:9px;border-radius:50%;background:var(--line);margin-right:6px;vertical-align:1px}
 .dot.on{background:#1a9e6a;box-shadow:0 0 0 3px #1a9e6a33}
 .onl{color:#1a9e6a!important;font-weight:600}
@@ -272,11 +280,44 @@ const regLabel=a=>a&&a.length?a.join(', '):'все регионы';
 function calcPerms(){const r=meM&&meM.active?RL.find(x=>x.key===meM.role):null;isMgr=!!(r&&r.is_admin);canProj=isMgr||!!(r&&r.can_projects);canDel=isMgr||!!(r&&r.can_delete)}
 async function loadRL(){RL=await ok(sb.from('wt_roles').select('*').order('sort').order('name'));ROLES={};RL.forEach(r=>ROLES[r.key]=r.name);calcPerms()}
 async function loadRG(){RG=(await ok(sb.from('wt_regions').select('*').order('sort').order('name'))).map(r=>({id:r.id,name:r.name,sort:r.sort}));REGIONS=RG.map(r=>r.name);if(fReg!=='all'&&!REGIONS.includes(fReg))fReg='all'}
+let FL=[],pend=[];const MAXF=20*1024*1024;
+async function loadFL(){FL=(await ok(sb.from('wt_files').select('*').order('created_at').limit(5000))).map(r=>({id:r.id,taskId:r.task_id,path:r.path,name:r.name,size:+r.size||0,mime:r.mime||'',by:r.uploaded_by||'',at:ms(r.created_at)}))}
+const fsize=b=>b<1024?b+' Б':b<1048576?Math.round(b/1024)+' КБ':(b/1048576).toFixed(1).replace('.',',')+' МБ';
+const isImg=f=>/^image\//.test(f.mime);
+const extOf=n=>{const m=/\.([a-z0-9]{1,8})$/i.exec(n||'');return m?m[1].toLowerCase():''};
+async function uploadFiles(taskId,files){
+  let okN=0;
+  for(const f of files){
+    if(f.size>MAXF){toast('«'+f.name+'» больше 20 МБ — не загружен');continue}
+    const e=extOf(f.name),path=taskId+'/'+Date.now().toString(36)+Math.random().toString(36).slice(2,8)+(e?'.'+e:'');
+    try{const up=await sb.storage.from('wt-files').upload(path,f,{contentType:f.type||'application/octet-stream',upsert:false});if(up.error)throw up.error;
+      await ok(sb.from('wt_files').insert({task_id:taskId,path,name:(f.name||'файл').slice(0,200),size:f.size,mime:f.type||'',uploaded_by:me}));okN++}
+    catch(err){console.warn(err);toast('Не удалось загрузить «'+f.name+'»')}
+  }
+  if(okN)toast(okN===1?'Файл прикреплён':'Прикреплено файлов: '+okN);
+  await loadFL();return okN;
+}
+async function openFile(id){const f=FL.find(x=>x.id===id);if(!f)return;
+  const {data,error}=await sb.storage.from('wt-files').createSignedUrl(f.path,3600,isImg(f)||/pdf/.test(f.mime)?undefined:{download:f.name});
+  if(error||!data)return toast('Не удалось открыть файл');openUrl(data.signedUrl)}
+async function delFile(id){const f=FL.find(x=>x.id===id);if(!f)return;
+  try{const r=await sb.storage.from('wt-files').remove([f.path]);if(r.error)throw r.error;await ok(sb.from('wt_files').delete().eq('id',id));toast('Файл удалён');await loadFL();drawFiles()}catch(e){fail(e)}}
+async function drawFiles(){
+  const box=$('#fl-box');if(!box)return;
+  const list=curId?FL.filter(f=>f.taskId===curId):[];
+  const canDelF=f=>f.by===me||canDel;
+  box.innerHTML=(list.map(f=>`<div class="fl"><button class="fl-open" data-fopen="${esc(f.id)}">${isImg(f)?`<img alt="" data-fthumb="${esc(f.path)}">`:`<span class="fl-ext">${esc(extOf(f.name).toUpperCase()||'ФАЙЛ')}</span>`}<span class="fl-t"><b>${esc(f.name)}</b><small>${fsize(f.size)} · ${esc(nm(f.by))} · ${ftime(f.at)}</small></span></button>${canDelF(f)?`<button class="link" data-fdel="${esc(f.id)}" aria-label="Удалить файл">×</button>`:''}</div>`).join(''))
+   +pend.map((f,i)=>`<div class="fl"><span class="fl-open"><span class="fl-ext">${esc(extOf(f.name).toUpperCase()||'ФАЙЛ')}</span><span class="fl-t"><b>${esc(f.name)}</b><small>${fsize(f.size)} · загрузится после сохранения</small></span></span><button class="link" data-pdel="${i}" aria-label="Убрать">×</button></div>`).join('')
+   +(!list.length&&!pend.length?'<p class="note" style="margin:0 0 6px">Файлов пока нет</p>':'');
+  $('#fl-n').textContent=(list.length+pend.length)||'';
+  const imgs=[...box.querySelectorAll('[data-fthumb]')];
+  if(imgs.length){const {data}=await sb.storage.from('wt-files').createSignedUrls(imgs.map(i=>i.dataset.fthumb),3600);(data||[]).forEach((d,i)=>{if(d&&d.signedUrl&&imgs[i])imgs[i].src=d.signedUrl})}
+}
 async function loadCM(){if(!curId)return;CM=(await ok(sb.from('wt_comments').select('*').eq('task_id',curId).order('created_at').limit(300))).map(r=>({id:r.id,by:r.author,text:r.text,at:ms(r.created_at)}));drawComments()}
 const timers={};
 function later(k,fn){clearTimeout(timers[k]);timers[k]=setTimeout(async()=>{try{await fn();refresh()}catch(e){console.warn(e)}},250)}
 function refresh(){if(sheetKind==='task')drawTime();if(sheetKind==='team')teamSheet();if(!sheetKind)render();else if(view==='chat'||view==='rep')render()}
-async function loadAll(){await loadRL();await Promise.all([loadRG(),loadTeam(),loadP(),loadTM(),loadCH()]);await loadT()}
+async function loadAll(){await loadRL();await Promise.all([loadRG(),loadTeam(),loadP(),loadTM(),loadCH(),loadFL().catch(()=>{})]);await loadT()}
 let ONLINE=new Set(),pres=null;
 function seenTxt(id){if(ONLINE.has(id))return 'в сети';const m=member(id);if(!m||!m.seen)return 'ещё не заходил(а)';const d=(Date.now()-m.seen)/6e4;
   if(d<2)return 'был(а) только что';if(d<60)return 'был(а) '+Math.round(d)+' мин назад';if(d<1440)return 'был(а) '+Math.round(d/60)+' ч назад';return 'был(а) '+ftime(m.seen)}
@@ -296,6 +337,7 @@ function subscribe(){
    .on('postgres_changes',{event:'*',schema:'public',table:'wt_tasks'},()=>later('t',loadT))
    .on('postgres_changes',{event:'*',schema:'public',table:'wt_projects'},()=>later('p',loadP))
    .on('postgres_changes',{event:'*',schema:'public',table:'wt_time'},()=>later('m',loadTM))
+   .on('postgres_changes',{event:'*',schema:'public',table:'wt_files'},()=>later('fl',async()=>{await loadFL();drawFiles()}))
    .on('postgres_changes',{event:'*',schema:'public',table:'wt_members'},()=>later('team',loadTeam))
    .on('postgres_changes',{event:'*',schema:'public',table:'wt_roles'},()=>later('rl',async()=>{await loadRL();await loadTeam()}))
    .on('postgres_changes',{event:'*',schema:'public',table:'wt_regions'},()=>later('rg',async()=>{await loadRG();await loadT()}))
@@ -313,7 +355,7 @@ function card(t){
   return `<article class="card ${esc(t.status)}" data-id="${esc(t.id)}">
   <button class="st" data-st="${esc(t.id)}" aria-label="Сменить статус"><span></span></button>
   <div class="cb"><div class="tt">${t.priority>0?`<span class="pri">${t.priority>1?'!! ':'! '}</span>`:''}${esc(t.title)}</div>
-  <div class="meta">${t.region?`<span class="reg">${esc(t.region)}</span>`:''}${p?`<span class="chip" style="--c:${esc(p.color)}">${esc(p.name)}</span>`:''}${t.due?`<span class="${overdue(t)?'od':''}">до ${fd(t.due)}</span>`:''}${mine?'<span class="reg">Вы</span>':''}${others.length?`<span>${esc(others.join(', '))}</span>`:''}${isW(t,me)?'<span class="reg">Вы наблюдаете</span>':(t.watchers||[]).length?`<span>наблюдатели: ${(t.watchers||[]).length}</span>`:''}${cl.length?`<span>☑ ${cd}/${cl.length}</span>`:''}${tm?`<span>${fm(tm)}</span>`:''}${run&&run.id===t.id?'<span class="od">● таймер</span>':''}</div></div></article>`;
+  <div class="meta">${t.region?`<span class="reg">${esc(t.region)}</span>`:''}${p?`<span class="chip" style="--c:${esc(p.color)}">${esc(p.name)}</span>`:''}${t.due?`<span class="${overdue(t)?'od':''}">до ${fd(t.due)}</span>`:''}${mine?'<span class="reg">Вы</span>':''}${others.length?`<span>${esc(others.join(', '))}</span>`:''}${isW(t,me)?'<span class="reg">Вы наблюдаете</span>':(t.watchers||[]).length?`<span>наблюдатели: ${(t.watchers||[]).length}</span>`:''}${cl.length?`<span>☑ ${cd}/${cl.length}</span>`:''}${tm?`<span>${fm(tm)}</span>`:''}${FL.some(f=>f.taskId===t.id)?`<span>файлов: ${FL.filter(f=>f.taskId===t.id).length}</span>`:''}${run&&run.id===t.id?'<span class="od">● таймер</span>':''}</div></div></article>`;
 }
 function emptyBox(){
   if(!P.length&&view==='proj')return canProj?'<div class="empty"><b>Начните с проекта</b>Например: «Открытие ТТ», «Ремонт», «Закупки».<br><br><button class="btn acc" data-newp>Создать проект</button></div>':'<div class="empty"><b>Проектов пока нет</b>Их создаёт руководитель.</div>';
@@ -396,9 +438,9 @@ function render(){
 function openTask(id){
   const t=id?T.find(x=>x.id===id):null;if(id&&!t)return;
   draft=t?JSON.parse(JSON.stringify(t)):{title:'',desc:'',projectId:fProj!=='all'?fProj:'',region:fReg!=='all'?fReg:(myRegs().length===1?myRegs()[0]:''),assignees:isMgr?[]:(me?[me]:[]),watchers:[],status:'todo',priority:0,due:'',checklist:[]};
-  curId=id||null;sheetKind='task';delArm=false;CM=[];
+  curId=id||null;sheetKind='task';delArm=false;CM=[];pend=[];
   taskSheet();$('#ov').hidden=false;history.pushState({s:1},'');
-  if(curId)loadCM().catch(()=>{});else setTimeout(()=>$('#f-title')?.focus(),80);
+  drawFiles();if(curId)loadCM().catch(()=>{});else setTimeout(()=>$('#f-title')?.focus(),80);
 }
 function sync(){if(sheetKind!=='task')return;draft.title=$('#f-title').value;draft.desc=$('#f-desc').value;draft.projectId=$('#f-proj').value;draft.region=$('#f-reg').value;draft.priority=+$('#f-pri').value;draft.due=$('#f-due').value}
 function taskSheet(){
@@ -416,6 +458,8 @@ function taskSheet(){
   <h3>Чек-лист <span>${cl.filter(c=>c.d).length}/${cl.length}</span></h3>
   <ul class="cl">${cl.map((c,i)=>`<li class="${c.d?'d':''}"><label><input type="checkbox" data-ci="${i}"${c.d?' checked':''}>${esc(c.t)}</label><button data-cx="${i}" aria-label="Удалить пункт">×</button></li>`).join('')}</ul>
   <form class="inl" id="cl-add"><input id="cl-in" placeholder="Новый пункт" maxlength="200"><button class="btn ghost">Добавить</button></form>
+  <h3>Файлы <span id="fl-n"></span></h3><div id="fl-box"></div>
+  <label class="btn ghost fl-add">Прикрепить файл или фото<input type="file" id="fl-in" multiple hidden></label>
   ${curId?`<h3>Учёт времени</h3><div class="tm" id="tm-box"></div>
   <h3>Комментарии <span id="cm-n"></span></h3><div id="cm-list"><p class="note">Загрузка…</p></div>
   <form class="inl" id="cm-add"><input id="cm-in" placeholder="Написать комментарий" maxlength="2000"><button class="btn">Отпр.</button></form>
@@ -442,7 +486,8 @@ async function saveTask(){
   const d={title:draft.title.trim(),descr:draft.desc,project_id:draft.projectId||null,region:draft.region||'',assignees:draft.assignees||[],watchers:draft.watchers||[],status:draft.status,priority:+draft.priority||0,due:draft.due||null,checklist:draft.checklist||[],updated_at:now};
   if(draft.status==='done'&&old?.status!=='done')d.done_at=now;
   if(draft.status!=='done')d.done_at=null;
-  try{if(curId)await ok(sb.from('wt_tasks').update(d).eq('id',curId));else await ok(sb.from('wt_tasks').insert({...d,created_by:me}));
+  try{let newId=null;if(curId)await ok(sb.from('wt_tasks').update(d).eq('id',curId));else{const row=await ok(sb.from('wt_tasks').insert({...d,created_by:me}).select('id').single());newId=row&&row.id}
+    const toUp=pend.slice();pend=[];if(newId&&toUp.length){await uploadFiles(newId,toUp)}
     const wasNew=!curId;closeSheet();toast(wasNew?'Задача создана':'Сохранено');later('t',loadT)}catch(e){fail(e)}
 }
 async function cycle(id){
@@ -636,6 +681,9 @@ $('#sheet').addEventListener('click',async e=>{
     return;
   }
   if(sheetKind!=='task')return;
+  const fo=t.closest('[data-fopen]');if(fo)return openFile(fo.dataset.fopen);
+  const fdl=t.closest('[data-fdel]');if(fdl){if(fdl.dataset.arm!=='1'){fdl.dataset.arm='1';fdl.textContent='Удалить?';return}return delFile(fdl.dataset.fdel)}
+  const pdl=t.closest('[data-pdel]');if(pdl){pend.splice(+pdl.dataset.pdel,1);drawFiles();return}
   const wc=t.closest('[data-wch]');if(wc){const id=wc.dataset.wch,a=draft.watchers=draft.watchers||[];const i=a.indexOf(id);if(i>=0)a.splice(i,1);else a.push(id);wc.setAttribute('aria-pressed',i<0);return}
   const ag=t.closest('[data-asg]');if(ag){const id=ag.dataset.asg,a=draft.assignees=draft.assignees||[];const i=a.indexOf(id);if(i>=0)a.splice(i,1);else a.push(id);ag.setAttribute('aria-pressed',i<0);return}
   const s=t.closest('[data-s]');if(s){draft.status=s.dataset.s;document.querySelectorAll('#f-st button').forEach(b=>b.setAttribute('aria-pressed',b===s));return}
@@ -646,6 +694,9 @@ $('#sheet').addEventListener('click',async e=>{
   if(t.id==='del'){if(!delArm){delArm=true;t.textContent='Точно удалить?';return}const id=curId;closeSheet();try{await ok(sb.from('wt_tasks').delete().eq('id',id));toast('Задача удалена');later('t',loadT)}catch(err){fail(err)}}
 });
 $('#sheet').addEventListener('change',async e=>{
+  if(e.target.id==='fl-in'){const files=[...e.target.files];e.target.value='';if(!files.length)return;
+    if(!curId){sync();pend.push(...files);drawFiles();return}
+    const lb=e.target.closest('label');if(lb)lb.classList.add('busy');toast('Загружаю…');await uploadFiles(curId,files);if(lb)lb.classList.remove('busy');drawFiles();return}
   const r=e.target.closest('[data-mrole]');if(r){try{await ok(sb.from('wt_members').update({role:r.value}).eq('user_id',r.dataset.mrole));later('team',loadTeam)}catch(err){toast(/руководител/i.test(err.message||'')?'В команде должен остаться хотя бы один руководитель':'Не удалось сохранить');later('team',loadTeam)}return}
 
   const i=e.target.closest('[data-ci]');if(!i)return;sync();draft.checklist[+i.dataset.ci].d=i.checked;taskSheet();saveChecklist();
