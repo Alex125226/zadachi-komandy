@@ -131,6 +131,9 @@ label input,label select,label textarea,.inl input{display:block;width:100%;marg
 .toast.on{opacity:1}
 .note{font-size:13px;color:var(--mute);margin:12px 0 0}
 .reg{font-weight:600;color:var(--ink)}
+.dot{display:inline-block;width:9px;height:9px;border-radius:50%;background:var(--line);margin-right:6px;vertical-align:1px}
+.dot.on{background:#1a9e6a;box-shadow:0 0 0 3px #1a9e6a33}
+.onl{color:#1a9e6a!important;font-weight:600}
 .scroll{overflow-x:auto;background:var(--card);border:1px solid var(--line);border-radius:14px}
 .tt2{width:100%;border-collapse:collapse;font-size:14px}
 .tt2 th{font-weight:500;color:var(--mute);font-size:12px;text-align:right;padding:8px 10px;white-space:nowrap;border-bottom:1px solid var(--line)}
@@ -263,7 +266,7 @@ async function loadT(){const prev=new Map(T.map(t=>[t.id,{a:isAs(t,me),w:isW(t,m
     else if(isW(t,me)&&pv.w&&pv.st&&pv.st!==t.status)notify('«'+t.title+'»: '+(ST.find(x=>x.k===t.status)||{}).n)})}
 async function loadTM(){TM=(await ok(sb.from('wt_time').select('*').order('created_at',{ascending:false}).limit(3000))).map(r=>({id:r.id,taskId:r.task_id,min:r.minutes,at:ms(r.created_at),by:r.user_id}))}
 async function loadCH(){CH=(await ok(sb.from('wt_chat').select('*').order('created_at',{ascending:false}).limit(600))).map(r=>({id:r.id,region:r.region||'',taskId:r.task_id||'',by:r.author,text:r.text,at:ms(r.created_at)})).reverse()}
-async function loadTeam(){TEAM=(await ok(sb.from('wt_members').select('*').order('name'))).map(r=>({id:r.user_id,name:r.name,login:r.login,role:r.role,regions:Array.isArray(r.regions)?r.regions:(r.region?[r.region]:[]),region:r.region||'',active:r.active}));names={};TEAM.forEach(m=>names[m.id]=m.name);meM=member(me);calcPerms()}
+async function loadTeam(){TEAM=(await ok(sb.from('wt_members').select('*').order('name'))).map(r=>({id:r.user_id,name:r.name,login:r.login,role:r.role,regions:Array.isArray(r.regions)?r.regions:(r.region?[r.region]:[]),region:r.region||'',active:r.active,seen:ms(r.last_seen)}));names={};TEAM.forEach(m=>names[m.id]=m.name);meM=member(me);calcPerms()}
 const myRegs=()=>meM&&meM.regions||[];const restricted=()=>myRegs().length>0;
 const regLabel=a=>a&&a.length?a.join(', '):'все регионы';
 function calcPerms(){const r=meM&&meM.active?RL.find(x=>x.key===meM.role):null;isMgr=!!(r&&r.is_admin);canProj=isMgr||!!(r&&r.can_projects);canDel=isMgr||!!(r&&r.can_delete)}
@@ -274,6 +277,19 @@ const timers={};
 function later(k,fn){clearTimeout(timers[k]);timers[k]=setTimeout(async()=>{try{await fn();refresh()}catch(e){console.warn(e)}},250)}
 function refresh(){if(sheetKind==='task')drawTime();if(sheetKind==='team')teamSheet();if(!sheetKind)render();else if(view==='chat'||view==='rep')render()}
 async function loadAll(){await loadRL();await Promise.all([loadRG(),loadTeam(),loadP(),loadTM(),loadCH()]);await loadT()}
+let ONLINE=new Set(),pres=null;
+function seenTxt(id){if(ONLINE.has(id))return 'в сети';const m=member(id);if(!m||!m.seen)return 'ещё не заходил(а)';const d=(Date.now()-m.seen)/6e4;
+  if(d<2)return 'был(а) только что';if(d<60)return 'был(а) '+Math.round(d)+' мин назад';if(d<1440)return 'был(а) '+Math.round(d/60)+' ч назад';return 'был(а) '+ftime(m.seen)}
+const dot=id=>`<i class="dot${ONLINE.has(id)?' on':''}" title="${esc(seenTxt(id))}"></i>`;
+async function touch(){try{await sb.rpc('wt_touch')}catch(e){}}
+function presence(){
+  if(pres)sb.removeChannel(pres);
+  pres=sb.channel('wt-online',{config:{presence:{key:me}}});
+  pres.on('presence',{event:'sync'},()=>{ONLINE=new Set(Object.keys(pres.presenceState()));if(!sheetKind||sheetKind==='team')refreshOnline()})
+   .subscribe(st=>{if(st==='SUBSCRIBED')pres.track({at:Date.now()})});
+}
+let onlT=0;function refreshOnline(){clearTimeout(onlT);onlT=setTimeout(()=>{if(sheetKind==='team')teamSheet();else if(!sheetKind&&(view==='rep'||view==='chat'))render()},300)}
+setInterval(()=>{if(ready&&document.visibilityState==='visible')touch()},120000);
 function subscribe(){
   if(channel)sb.removeChannel(channel);
   channel=sb.channel('wt-all')
@@ -334,7 +350,7 @@ function repHTML(){
   const noA=open.filter(t=>!(t.assignees||[]).length).length;
   return `<div class="kpis"><div class="kpi"><b>${open.length}</b><span>открытых задач</span></div><div class="kpi ${od.length?'hot':''}"><b>${od.length}</b><span>просрочено</span></div><div class="kpi"><b>${dn.length}</b><span>готово за 7 дней</span></div><div class="kpi"><b>${fm(tw.reduce((s,x)=>s+(+x.min||0),0))}</b><span>время за 7 дней</span></div></div>
   <h2 class="grp">Команда${fReg!=='all'?' · '+esc(fReg):''} <span>${tm.length}</span></h2>
-  <div class="scroll"><table class="tt2"><thead><tr><th>Сотрудник</th><th>Открыто</th><th>Просроч.</th><th>Готово 7 дн.</th><th>Время 7 дн.</th></tr></thead><tbody>${rowsT.map(r=>`<tr data-who="${esc(r.m.id)}"><td><b>${esc(r.m.name)}</b><small>${esc(ROLES[r.m.role]||'')}${' · '+esc(regLabel(r.m.regions))}</small></td><td>${r.o}</td><td class="${r.od?'od':''}">${r.od}</td><td>${r.dn}</td><td>${fm(r.min)}</td></tr>`).join('')}</tbody></table></div>
+  <div class="scroll"><table class="tt2"><thead><tr><th>Сотрудник</th><th>Открыто</th><th>Просроч.</th><th>Готово 7 дн.</th><th>Время 7 дн.</th></tr></thead><tbody>${rowsT.map(r=>`<tr data-who="${esc(r.m.id)}"><td><b>${dot(r.m.id)}${esc(r.m.name)}</b><small>${esc(ROLES[r.m.role]||'')}${' · '+esc(regLabel(r.m.regions))}</small><small class="${ONLINE.has(r.m.id)?'onl':''}">${esc(seenTxt(r.m.id))}</small></td><td>${r.o}</td><td class="${r.od?'od':''}">${r.od}</td><td>${r.dn}</td><td>${fm(r.min)}</td></tr>`).join('')}</tbody></table></div>
   ${noA?`<p class="note">Без ответственного: ${noA} открытых задач.</p>`:''}
   ${isMgr?'<div class="acts" style="margin-top:10px"><button class="btn ghost" id="teamBtn">Управление командой</button>'+(restricted()?'':'<button class="btn ghost" id="regBtn">Регионы</button>')+'<button class="btn ghost" id="roleBtn">Роли</button></div>':''}
   ${fReg==='all'?`<h2 class="grp">Открытые задачи по регионам</h2><div class="rows">${Object.keys(byR).length?Object.entries(byR).sort((a,b)=>b[1]-a[1]).map(([r,n])=>`<div class="r"><span>${esc(r)}${odR[r]?` · <b class="od">${odR[r]} просроч.</b>`:''}</span><em>${n}</em><div class="bar"><i style="width:${n/mr*100}%"></i></div></div>`).join(''):'<div class="r"><span>Открытых задач нет</span></div>'}</div>`:''}
@@ -344,11 +360,14 @@ function repHTML(){
 const chKey=r=>r==='all'?'':r;
 function unread(r){const k=chKey(r)||'_';const m=CH.filter(x=>(x.region||'')===chKey(r)&&x.by!==me);return m.length&&m[m.length-1].at>(lastRead[k]||0)}
 function markRead(){lastRead[chKey(fReg)||'_']=Date.now();ls.set('ws-read',JSON.stringify(lastRead))}
+function onLineEmpty(){const onl=TEAM.filter(m=>m.id!==me&&ONLINE.has(m.id)&&(fReg==='all'||!m.regions.length||m.regions.includes(fReg))).map(m=>m.name);return `<p class="note" style="text-align:center;margin:0 0 8px"><i class="dot on"></i>${onl.length?'Сейчас в сети: '+esc(onl.join(', ')):'Сейчас в сети только вы'}</p>`}
 function chatHTML(){
   const ms_=CH.filter(x=>(x.region||'')===chKey(fReg));
-  if(!ms_.length)return `<div class="empty"><b>${fReg==='all'?'Общий чат':'Чат: '+esc(fReg)}</b>Сообщений пока нет. Напишите первым.</div>`;
+  if(!ms_.length)return onLineEmpty()+`<div class="empty"><b>${fReg==='all'?'Общий чат':'Чат: '+esc(fReg)}</b>Сообщений пока нет. Напишите первым.</div>`;
+  const onl=TEAM.filter(m=>m.id!==me&&ONLINE.has(m.id)&&(fReg==='all'||!m.regions.length||m.regions.includes(fReg))).map(m=>m.name);
+  const onLine=`<p class="note" style="text-align:center;margin:0 0 6px"><i class="dot on"></i>${onl.length?'Сейчас в сети: '+esc(onl.join(', ')):'Сейчас в сети только вы'}</p>`;
   let lastDay='';
-  return '<div class="msgs">'+ms_.map(m=>{const d=new Date(m.at),dk=day(d);const sep=dk!==lastDay?`<div class="day">${dk===today()?'Сегодня':pad(d.getDate())+'.'+pad(d.getMonth()+1)+'.'+d.getFullYear()}</div>`:'';lastDay=dk;
+  return onLine+'<div class="msgs">'+ms_.map(m=>{const d=new Date(m.at),dk=day(d);const sep=dk!==lastDay?`<div class="day">${dk===today()?'Сегодня':pad(d.getDate())+'.'+pad(d.getMonth()+1)+'.'+d.getFullYear()}</div>`:'';lastDay=dk;
     const mine=m.by===me,t=m.taskId?T.find(x=>x.id===m.taskId):null;
     const cd=mine||isMgr;
     return sep+`<div class="msg${mine?' me':''}${cd?' cd':''}" data-mid="${esc(m.id)}">${mine?'':`<div class="who">${esc(nm(m.by))}</div>`}<p>${esc(m.text)}</p>${t?`<button class="tlink" data-open="${esc(t.id)}">Задача: ${esc(t.title)}</button>`:''}<time>${pad(d.getHours())}:${pad(d.getMinutes())}</time>${cd?`<button class="mdel" data-mdel="${esc(m.id)}">Удалить</button>`:''}</div>`}).join('')+(CH.some(m=>m.by===me)||isMgr?'<p class="note" style="text-align:center">Нажмите на сообщение, чтобы удалить его</p>':'')+'</div>';
@@ -479,7 +498,7 @@ function teamSheet(){
   <p class="note">Передайте сотруднику логин и пароль. Сотрудник видит задачи, людей и чаты только выбранных регионов, плюс общий чат и задачи без региона. «Все регионы» — видит всё.</p>
   <p class="note">«Заблокировать» — временно закрыть доступ. «Удалить» — убрать навсегда: его задачи, сообщения и время останутся в истории как «Удалённый сотрудник», задачи на нём станут без ответственного.</p>
   <h3>Сотрудники <span>${TEAM.filter(m=>m.active).length}</span></h3>
-  ${TEAM.map(m=>`<div class="mem${m.active?'':' off'}"><b>${esc(m.name)}${m.id===me?' (вы)':''}<small>логин: ${esc(m.login)}${m.active?'':' · заблокирован'}</small></b>
+  ${TEAM.map(m=>`<div class="mem${m.active?'':' off'}"><b>${dot(m.id)}${esc(m.name)}${m.id===me?' (вы)':''}<small>логин: ${esc(m.login)}${m.active?'':' · заблокирован'} · ${esc(seenTxt(m.id))}</small></b>
    <select data-mrole="${esc(m.id)}" aria-label="Роль"${m.id===me?' disabled':''}>${opt(roleOpts,m.role)}</select>
    ${m.id===me&&!isMgr?'':chips(m.id,m.regions)}${m.id===me?'':`<button class="link" data-mpass="${esc(m.id)}">Пароль</button><button class="link" data-mblock="${esc(m.id)}" data-on="${m.active?1:0}">${m.active?'Заблокировать':'Вернуть доступ'}</button><button class="link" style="color:var(--warn)" data-mdelu="${esc(m.id)}">Удалить</button>`}</div>`).join('')}`;
 }
@@ -675,7 +694,7 @@ async function start(){
   $('#auth').hidden=true;
   const sr=ls.get('ws-reg');fReg=sr&&(sr==='all'||REGIONS.includes(sr))?sr:(myRegs().length===1?myRegs()[0]:'all');
   const sm=ls.get('ws-mine');mineOnly=sm===null?!isMgr:sm==='1';
-  ready=true;render();tick();subscribe();
+  ready=true;render();tick();subscribe();presence();touch();
 }
 sb.auth.onAuthStateChange(ev=>{if(ev==='SIGNED_OUT'&&ready)location.reload()});
 
@@ -698,7 +717,7 @@ const cmpVer=(a,b)=>{const x=String(a).split('.').map(Number),y=String(b).split(
 function openUrl(u){try{if(Plug.Browser)return Plug.Browser.open({url:u})}catch(e){}window.open(u,'_blank')}
 (async()=>{try{if(Plug.App){const i=await Plug.App.getInfo();appVer=i.version}}catch(e){}checkUpdates()})();
 setInterval(checkUpdates,30*60e3);
-document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'){checkUpdates();if(ready){later('all',loadAll)}}});
+document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'){checkUpdates();if(ready){touch();if(pres)pres.track({at:Date.now()});later('all',loadAll)}}else if(ready){touch();if(pres)pres.untrack()}});
 try{Plug.App&&Plug.App.addListener('backButton',()=>{if(!$('#ov').hidden)return closeSheet();if(view!=='list'){view='list';render();return}Plug.App.exitApp()})}catch(e){}
 
 start();
