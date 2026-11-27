@@ -29,7 +29,7 @@ button{cursor:pointer}
 .chips button i{width:9px;height:9px;border-radius:50%;background:var(--c)}
 .chips button[aria-pressed=true]{background:var(--ink);color:var(--bg);border-color:var(--ink)}
 .search{display:flex;gap:8px;margin-top:10px}
-.search input{flex:1;border:1px solid var(--line);background:var(--card);border-radius:12px;padding:10px 12px;font-size:16px}
+.search input{flex:1;min-width:80px;border:1px solid var(--line);background:var(--card);border-radius:12px;padding:10px 12px;font-size:16px}
 .search button{border:1px solid var(--line);background:var(--card);border-radius:12px;padding:0 12px;font-size:14px;white-space:nowrap}
 .search button[aria-pressed=true]{border-color:var(--acc);color:var(--acc)}
 main{padding:14px 16px calc(150px + env(safe-area-inset-bottom));max-width:1240px;margin:0 auto}
@@ -186,7 +186,7 @@ body.chat main{padding-bottom:calc(140px + env(safe-area-inset-bottom))}
   <h1><span id="title">Задачи</span><span style="display:flex;align-items:center;gap:8px"><small id="sub"></small><button class="me-btn" id="meBtn" aria-label="Профиль">…</button></span></h1>
   <div class="chips" id="regs"></div>
   <div class="chips" id="chips" style="margin-top:6px"></div>
-  <div class="search" id="searchBox"><input id="q" type="search" placeholder="Поиск по задачам и людям" aria-label="Поиск"><button id="mine" aria-pressed="false">Мои</button><button id="openOnly" aria-pressed="false">Не готовые</button></div>
+  <div class="search" id="searchBox"><input id="q" type="search" placeholder="Поиск" aria-label="Поиск"><button id="mine" aria-pressed="false">Мои</button><button id="watch" aria-pressed="false">Слежу</button><button id="openOnly" aria-pressed="false">Не готовые</button></div>
 </header>
 <main id="view"><div class="empty"><b>Загрузка…</b>Подключаемся к базе</div></main>
 <div class="runbar" id="runbar" hidden><span id="runT"></span><b id="runE">0:00</b><button id="runStop">Стоп</button></div>
@@ -230,7 +230,7 @@ const sb=window.supabase.createClient(SB_URL,SB_KEY,{auth:{persistSession:true,a
 
 let me=null,meM=null,isMgr=false,canProj=false,canDel=false,ready=false,channel=null;
 let P=[],T=[],TM=[],CM=[],CH=[],TEAM=[],names={};
-let view=TITLES[ls.get('ws-view')]?ls.get('ws-view'):'list',fProj='all',fReg='all',fWho='',q='',openOnly=false,mineOnly=false;
+let view=TITLES[ls.get('ws-view')]?ls.get('ws-view'):'list',fProj='all',fReg='all',fWho='',q='',openOnly=false,mineOnly=false,watchOnly=false;
 let draft=null,curId=null,sheetKind=null,delArm=false;
 let run=null;try{run=JSON.parse(ls.get('ws-run')||'null')}catch(e){}
 const saveRun=()=>ls.set('ws-run',run?JSON.stringify(run):null);
@@ -244,19 +244,23 @@ const member=id=>TEAM.find(m=>m.id===id);
 const nm=id=>id?(names[id]||'Сотрудник'):'Удалённый сотрудник';
 const aName=t=>(t.assignees||[]).map(nm).join(', ');
 const isAs=(t,id)=>(t.assignees||[]).includes(id);
+const isW=(t,id)=>(t.watchers||[]).includes(id);
 const taskProj=id=>{const t=T.find(x=>x.id===id);return t?t.projectId:''};
 const timeFor=id=>TM.filter(x=>x.taskId===id).reduce((s,x)=>s+(+x.min||0),0);
 const overdue=t=>t.due&&t.status!=='done'&&t.due<today();
 const inReg=t=>fReg==='all'||t.region===fReg;
-function filtered(){const s=q.trim().toLowerCase();return T.filter(t=>inReg(t)&&(fProj==='all'||t.projectId===fProj)&&(!openOnly||t.status!=='done')&&(!mineOnly||isAs(t,me))&&(!fWho||isAs(t,fWho))&&(!s||[t.title,aName(t),t.desc].join(' ').toLowerCase().includes(s)))}
+function filtered(){const s=q.trim().toLowerCase();return T.filter(t=>inReg(t)&&(fProj==='all'||t.projectId===fProj)&&(!openOnly||t.status!=='done')&&(!mineOnly||isAs(t,me))&&(!watchOnly||isW(t,me))&&(!fWho||isAs(t,fWho))&&(!s||[t.title,aName(t),t.desc].join(' ').toLowerCase().includes(s)))}
 const sortT=a=>a.slice().sort((x,y)=>(y.priority||0)-(x.priority||0)||((x.due||'9')<(y.due||'9')?-1:(x.due||'9')>(y.due||'9')?1:0)||(y.updatedAt||0)-(x.updatedAt||0));
 
 /* ---------- Загрузка данных ---------- */
-const mapT=r=>({id:r.id,title:r.title,desc:r.descr||'',projectId:r.project_id||'',region:r.region||'',assignees:Array.isArray(r.assignees)?r.assignees:(r.assignee_id?[r.assignee_id]:[]),status:r.status,priority:r.priority||0,due:r.due||'',checklist:Array.isArray(r.checklist)?r.checklist:[],createdBy:r.created_by||'',createdAt:ms(r.created_at),updatedAt:ms(r.updated_at),doneAt:ms(r.done_at)});
+const mapT=r=>({id:r.id,title:r.title,desc:r.descr||'',projectId:r.project_id||'',region:r.region||'',assignees:Array.isArray(r.assignees)?r.assignees:(r.assignee_id?[r.assignee_id]:[]),watchers:Array.isArray(r.watchers)?r.watchers:[],status:r.status,priority:r.priority||0,due:r.due||'',checklist:Array.isArray(r.checklist)?r.checklist:[],createdBy:r.created_by||'',createdAt:ms(r.created_at),updatedAt:ms(r.updated_at),doneAt:ms(r.done_at)});
 async function loadP(){P=(await ok(sb.from('wt_projects').select('*').order('created_at'))).map(r=>({id:r.id,name:r.name,color:r.color}))}
-async function loadT(){const prev=new Map(T.map(t=>[t.id,isAs(t,me)]));const first=!ready;
+async function loadT(){const prev=new Map(T.map(t=>[t.id,{a:isAs(t,me),w:isW(t,me),st:t.status}]));const first=!ready;
   T=(await ok(sb.from('wt_tasks').select('*').limit(5000))).map(mapT);
-  if(!first&&me)T.forEach(t=>{if(isAs(t,me)&&!prev.get(t.id)&&t.createdBy!==me){notify('Вам назначена задача: '+t.title)}})}
+  if(!first&&me)T.forEach(t=>{const pv=prev.get(t.id)||{};
+    if(isAs(t,me)&&!pv.a&&t.createdBy!==me)notify('Вам назначена задача: '+t.title);
+    else if(isW(t,me)&&!pv.w&&t.createdBy!==me)notify('Вас добавили наблюдателем: '+t.title);
+    else if(isW(t,me)&&pv.w&&pv.st&&pv.st!==t.status)notify('«'+t.title+'»: '+(ST.find(x=>x.k===t.status)||{}).n)})}
 async function loadTM(){TM=(await ok(sb.from('wt_time').select('*').order('created_at',{ascending:false}).limit(3000))).map(r=>({id:r.id,taskId:r.task_id,min:r.minutes,at:ms(r.created_at),by:r.user_id}))}
 async function loadCH(){CH=(await ok(sb.from('wt_chat').select('*').order('created_at',{ascending:false}).limit(600))).map(r=>({id:r.id,region:r.region||'',taskId:r.task_id||'',by:r.author,text:r.text,at:ms(r.created_at)})).reverse()}
 async function loadTeam(){TEAM=(await ok(sb.from('wt_members').select('*').order('name'))).map(r=>({id:r.user_id,name:r.name,login:r.login,role:r.role,regions:Array.isArray(r.regions)?r.regions:(r.region?[r.region]:[]),region:r.region||'',active:r.active}));names={};TEAM.forEach(m=>names[m.id]=m.name);meM=member(me);calcPerms()}
@@ -279,7 +283,7 @@ function subscribe(){
    .on('postgres_changes',{event:'*',schema:'public',table:'wt_members'},()=>later('team',loadTeam))
    .on('postgres_changes',{event:'*',schema:'public',table:'wt_roles'},()=>later('rl',async()=>{await loadRL();await loadTeam()}))
    .on('postgres_changes',{event:'*',schema:'public',table:'wt_regions'},()=>later('rg',async()=>{await loadRG();await loadT()}))
-   .on('postgres_changes',{event:'*',schema:'public',table:'wt_comments'},p=>{const n=p.new||{},o=p.old||{};if(curId&&(n.task_id===curId||o.task_id===curId))later('c',loadCM)})
+   .on('postgres_changes',{event:'*',schema:'public',table:'wt_comments'},p=>{const n=p.new||{},o=p.old||{};if(p.eventType==='INSERT'&&n.author!==me&&n.task_id!==curId){const tk=T.find(x=>x.id===n.task_id);if(tk&&(isW(tk,me)||isAs(tk,me)))notify('Комментарий в «'+tk.title+'»: '+n.text)}if(curId&&(n.task_id===curId||o.task_id===curId))later('c',loadCM)})
    .on('postgres_changes',{event:'*',schema:'public',table:'wt_chat'},p=>{const n=p.new;
       if(p.eventType==='INSERT'&&n&&n.author!==me&&!(view==='chat'&&(n.region||'')===chKey(fReg))&&(!n.region||myRegs().includes(n.region)||!restricted()))notify((n.region?n.region+' · ':'')+nm(n.author)+': '+n.text);
       later('ch',loadCH)})
@@ -293,11 +297,11 @@ function card(t){
   return `<article class="card ${esc(t.status)}" data-id="${esc(t.id)}">
   <button class="st" data-st="${esc(t.id)}" aria-label="Сменить статус"><span></span></button>
   <div class="cb"><div class="tt">${t.priority>0?`<span class="pri">${t.priority>1?'!! ':'! '}</span>`:''}${esc(t.title)}</div>
-  <div class="meta">${t.region?`<span class="reg">${esc(t.region)}</span>`:''}${p?`<span class="chip" style="--c:${esc(p.color)}">${esc(p.name)}</span>`:''}${t.due?`<span class="${overdue(t)?'od':''}">до ${fd(t.due)}</span>`:''}${mine?'<span class="reg">Вы</span>':''}${others.length?`<span>${esc(others.join(', '))}</span>`:''}${cl.length?`<span>☑ ${cd}/${cl.length}</span>`:''}${tm?`<span>${fm(tm)}</span>`:''}${run&&run.id===t.id?'<span class="od">● таймер</span>':''}</div></div></article>`;
+  <div class="meta">${t.region?`<span class="reg">${esc(t.region)}</span>`:''}${p?`<span class="chip" style="--c:${esc(p.color)}">${esc(p.name)}</span>`:''}${t.due?`<span class="${overdue(t)?'od':''}">до ${fd(t.due)}</span>`:''}${mine?'<span class="reg">Вы</span>':''}${others.length?`<span>${esc(others.join(', '))}</span>`:''}${isW(t,me)?'<span class="reg">Вы наблюдаете</span>':(t.watchers||[]).length?`<span>наблюдатели: ${(t.watchers||[]).length}</span>`:''}${cl.length?`<span>☑ ${cd}/${cl.length}</span>`:''}${tm?`<span>${fm(tm)}</span>`:''}${run&&run.id===t.id?'<span class="od">● таймер</span>':''}</div></div></article>`;
 }
 function emptyBox(){
   if(!P.length&&view==='proj')return canProj?'<div class="empty"><b>Начните с проекта</b>Например: «Открытие ТТ», «Ремонт», «Закупки».<br><br><button class="btn acc" data-newp>Создать проект</button></div>':'<div class="empty"><b>Проектов пока нет</b>Их создаёт руководитель.</div>';
-  return `<div class="empty"><b>${mineOnly?'На вас задач нет':'Задач нет'}</b>${q||openOnly||mineOnly||fWho||fProj!=='all'||fReg!=='all'?'Под выбранные фильтры ничего не подходит.':'Нажмите «+», чтобы поставить первую задачу.'}</div>`;
+  return `<div class="empty"><b>${watchOnly?'Вы ни за чем не наблюдаете':mineOnly?'На вас задач нет':'Задач нет'}</b>${q||openOnly||mineOnly||watchOnly||fWho||fProj!=='all'||fReg!=='all'?'Под выбранные фильтры ничего не подходит.':'Нажмите «+», чтобы поставить первую задачу.'}</div>`;
 }
 function listHTML(){
   const ts=filtered();if(!ts.length)return emptyBox();
@@ -372,7 +376,7 @@ function render(){
 /* ---------- Задача ---------- */
 function openTask(id){
   const t=id?T.find(x=>x.id===id):null;if(id&&!t)return;
-  draft=t?JSON.parse(JSON.stringify(t)):{title:'',desc:'',projectId:fProj!=='all'?fProj:'',region:fReg!=='all'?fReg:(myRegs().length===1?myRegs()[0]:''),assignees:isMgr?[]:(me?[me]:[]),status:'todo',priority:0,due:'',checklist:[]};
+  draft=t?JSON.parse(JSON.stringify(t)):{title:'',desc:'',projectId:fProj!=='all'?fProj:'',region:fReg!=='all'?fReg:(myRegs().length===1?myRegs()[0]:''),assignees:isMgr?[]:(me?[me]:[]),watchers:[],status:'todo',priority:0,due:'',checklist:[]};
   curId=id||null;sheetKind='task';delArm=false;CM=[];
   taskSheet();$('#ov').hidden=false;history.pushState({s:1},'');
   if(curId)loadCM().catch(()=>{});else setTimeout(()=>$('#f-title')?.focus(),80);
@@ -380,7 +384,7 @@ function openTask(id){
 function sync(){if(sheetKind!=='task')return;draft.title=$('#f-title').value;draft.desc=$('#f-desc').value;draft.projectId=$('#f-proj').value;draft.region=$('#f-reg').value;draft.priority=+$('#f-pri').value;draft.due=$('#f-due').value}
 function taskSheet(){
   const cl=draft.checklist||[];
-  const team=TEAM.filter(m=>m.active||(draft.assignees||[]).includes(m.id)).sort((a,b)=>(a.regions.includes(draft.region)?0:1)-(b.regions.includes(draft.region)?0:1)||a.name.localeCompare(b.name));
+  const team=TEAM.filter(m=>m.active||(draft.assignees||[]).includes(m.id)||(draft.watchers||[]).includes(m.id)).sort((a,b)=>(a.regions.includes(draft.region)?0:1)-(b.regions.includes(draft.region)?0:1)||a.name.localeCompare(b.name));
   $('#sheet').innerHTML=`<div class="sh-h"><h2>${curId?'Задача':'Новая задача'}</h2><button class="link" data-close>Закрыть</button></div>
   <label>Название<input id="f-title" value="${esc(draft.title)}" placeholder="Что нужно сделать" maxlength="300"></label>
   <div class="seg" id="f-st">${ST.map(s=>`<button data-s="${s.k}" aria-pressed="${draft.status===s.k}">${s.n}</button>`).join('')}</div>
@@ -388,6 +392,7 @@ function taskSheet(){
   <div class="row2"><label>Регион<select id="f-reg"><option value="">Без региона</option>${(draft.region&&!REGIONS.includes(draft.region)?[draft.region]:[]).concat(REGIONS).map(r=>`<option${r===draft.region?' selected':''}>${esc(r)}</option>`).join('')}</select></label>
   <label>Проект<select id="f-proj"><option value="">Без проекта</option>${P.map(p=>`<option value="${esc(p.id)}"${p.id===draft.projectId?' selected':''}>${esc(p.name)}</option>`).join('')}</select></label></div>
   <label>Ответственные (можно несколько)</label><div class="chips asg" id="f-as" style="margin:6px 0 0;flex-wrap:wrap">${team.map(m=>`<button type="button" data-asg="${esc(m.id)}" aria-pressed="${(draft.assignees||[]).includes(m.id)}">${esc(m.name)}${m.id===me?' (вы)':''}</button>`).join('')||'<span class="note">В команде пока никого</span>'}</div>
+  <label>Наблюдатели — видят задачу и получают уведомления</label><div class="chips asg" id="f-wch" style="margin:6px 0 0;flex-wrap:wrap">${team.map(m=>`<button type="button" data-wch="${esc(m.id)}" aria-pressed="${(draft.watchers||[]).includes(m.id)}">${esc(m.name)}${m.id===me?' (вы)':''}</button>`).join('')}</div>
   <div class="row2"><label>Приоритет<select id="f-pri">${PRI.map((n,i)=>`<option value="${i}"${+draft.priority===i?' selected':''}>${n}</option>`).join('')}</select></label><label>Срок<input id="f-due" type="date" value="${esc(draft.due)}"></label></div>
   <h3>Чек-лист <span>${cl.filter(c=>c.d).length}/${cl.length}</span></h3>
   <ul class="cl">${cl.map((c,i)=>`<li class="${c.d?'d':''}"><label><input type="checkbox" data-ci="${i}"${c.d?' checked':''}>${esc(c.t)}</label><button data-cx="${i}" aria-label="Удалить пункт">×</button></li>`).join('')}</ul>
@@ -415,7 +420,7 @@ function closeSheet(fromBack){if($('#ov').hidden)return;$('#ov').hidden=true;$('
 async function saveTask(){
   sync();if(!draft.title.trim()){toast('Введите название');$('#f-title').focus();return}
   const old=curId?T.find(t=>t.id===curId):null,now=new Date().toISOString();
-  const d={title:draft.title.trim(),descr:draft.desc,project_id:draft.projectId||null,region:draft.region||'',assignees:draft.assignees||[],status:draft.status,priority:+draft.priority||0,due:draft.due||null,checklist:draft.checklist||[],updated_at:now};
+  const d={title:draft.title.trim(),descr:draft.desc,project_id:draft.projectId||null,region:draft.region||'',assignees:draft.assignees||[],watchers:draft.watchers||[],status:draft.status,priority:+draft.priority||0,due:draft.due||null,checklist:draft.checklist||[],updated_at:now};
   if(draft.status==='done'&&old?.status!=='done')d.done_at=now;
   if(draft.status!=='done')d.done_at=null;
   try{if(curId)await ok(sb.from('wt_tasks').update(d).eq('id',curId));else await ok(sb.from('wt_tasks').insert({...d,created_by:me}));
@@ -547,6 +552,7 @@ $('#regs').addEventListener('click',e=>{const b=e.target.closest('[data-r]');if(
 $('#chips').addEventListener('click',e=>{const b=e.target.closest('[data-f]');if(!b)return;fProj=b.dataset.f;render()});
 $('#q').addEventListener('input',e=>{q=e.target.value;render()});
 $('#mine').addEventListener('click',()=>{mineOnly=!mineOnly;fWho='';ls.set('ws-mine',mineOnly?'1':'0');render()});
+$('#watch').addEventListener('click',e=>{watchOnly=!watchOnly;e.currentTarget.setAttribute('aria-pressed',watchOnly);render()});
 $('#openOnly').addEventListener('click',e=>{openOnly=!openOnly;e.currentTarget.setAttribute('aria-pressed',openOnly);render()});
 $('#fab').addEventListener('click',()=>view==='proj'&&canProj?openProject():openTask());
 $('#meBtn').addEventListener('click',openMe);
@@ -611,6 +617,7 @@ $('#sheet').addEventListener('click',async e=>{
     return;
   }
   if(sheetKind!=='task')return;
+  const wc=t.closest('[data-wch]');if(wc){const id=wc.dataset.wch,a=draft.watchers=draft.watchers||[];const i=a.indexOf(id);if(i>=0)a.splice(i,1);else a.push(id);wc.setAttribute('aria-pressed',i<0);return}
   const ag=t.closest('[data-asg]');if(ag){const id=ag.dataset.asg,a=draft.assignees=draft.assignees||[];const i=a.indexOf(id);if(i>=0)a.splice(i,1);else a.push(id);ag.setAttribute('aria-pressed',i<0);return}
   const s=t.closest('[data-s]');if(s){draft.status=s.dataset.s;document.querySelectorAll('#f-st button').forEach(b=>b.setAttribute('aria-pressed',b===s));return}
   const cx=t.closest('[data-cx]');if(cx){sync();draft.checklist.splice(+cx.dataset.cx,1);taskSheet();saveChecklist();return}
